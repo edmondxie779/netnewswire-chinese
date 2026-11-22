@@ -6,6 +6,8 @@ localized through Base.lproj + zh-Hans.lproj/*.strings. Run from anywhere:
 
     python3 buildscripts/find-missing-zh-hans.py
 """
+
+from __future__ import annotations
 import json
 import re
 import xml.etree.ElementTree as ET

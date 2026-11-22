@@ -4,6 +4,8 @@
 Preserves upstream additions/removals/comments/English updates while keeping
 existing zh-Hans translations when the English source text has not changed.
 """
+
+from __future__ import annotations
 import json
 import subprocess
 import sys
