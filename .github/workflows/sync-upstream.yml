@@ -2,8 +2,9 @@ name: Sync Upstream
 
 # 每天自动检查上游 Ranchero-Software/NetNewsWire 更新（稳妥模式）：
 # - 无冲突且无新增未翻译词条：自动合并推送到 zh-hans；若版本号变化则自动触发 Release zh-Hans。
-# - 有新增未翻译词条：推送到 auto-sync/upstream 分支并创建/更新 PR 等待补译。
-# - 有代码/工程文件冲突：自动中止合并并创建 Issue 提醒手动处理。
+# - 有新增未翻译词条：推送到 auto-sync/upstream 分支，并创建带 upstream-sync 标签的 Issue。
+# - 有代码/工程文件冲突，或本流程自身出错：创建带 upstream-sync 标签的 Issue。
+# 带 upstream-sync 标签的 Issue 会触发 OpenBot 代码管家自动修复并直接推送到 zh-hans。
 on:
   schedule:
     - cron: '0 2 * * *'
@@ -37,6 +38,20 @@ jobs:
         with:
           ref: zh-hans
           fetch-depth: 0
+
+      - name: Prepare helpers
+        run: |
+          cat > /tmp/sync-helpers.sh <<'SH'
+          open_issue() {
+            # 已有打开的 upstream-sync 议题就追加评论，否则新建（新建才会触发 OpenBot）
+            existing=$(gh issue list --state open --label upstream-sync --json number --jq '.[0].number // empty')
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body-file "$2"
+            else
+              gh issue create --title "$1" --label upstream-sync --body-file "$2"
+            fi
+          }
+          SH
 
       - name: Fetch upstream
         run: |
@@ -96,32 +111,20 @@ jobs:
             echo "status=clean" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Notify on conflict
-        if: steps.merge.outputs.status == 'conflict'
-        run: |
-          existing=$(gh issue list --state open --search "上游同步遇到代码冲突 in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body-file /tmp/sync-report.md
-          else
-            gh issue create \
-              --title "上游同步遇到代码冲突，需要手动处理" \
-              --body-file /tmp/sync-report.md
-          fi
-
-      - name: Open or update PR for missing translations
+      - name: Push branch for missing translations
         if: steps.merge.outputs.status == 'missing_translations'
+        run: git push --force origin HEAD:refs/heads/auto-sync/upstream
+
+      - name: Open issue for conflict or missing translations
+        if: steps.merge.outputs.status == 'conflict' || steps.merge.outputs.status == 'missing_translations'
         run: |
-          git push --force origin HEAD:refs/heads/auto-sync/upstream
-          existing=$(gh pr list --head auto-sync/upstream --base zh-hans --state open --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            gh pr edit "$existing" --body-file /tmp/sync-report.md
+          source /tmp/sync-helpers.sh
+          if [ "${{ steps.merge.outputs.status }}" = "conflict" ]; then
+            title="上游同步遇到代码冲突（${{ steps.fetch.outputs.upstream_sha }}）"
           else
-            gh pr create \
-              --base zh-hans \
-              --head auto-sync/upstream \
-              --title "同步上游更新（待补全简体中文翻译）" \
-              --body-file /tmp/sync-report.md
+            title="上游同步有未翻译词条（${{ steps.fetch.outputs.upstream_sha }}）"
           fi
+          open_issue "$title" /tmp/sync-report.md
 
       - name: Push zh-hans and trigger release
         if: steps.merge.outputs.status == 'clean' || (steps.fetch.outputs.ahead == '0' && inputs.force_release)
@@ -134,3 +137,10 @@ jobs:
           else
             echo "已同步上游提交，但 NetNewsWire_version.xcconfig 未变化，跳过自动发版。"
           fi
+
+      - name: Open issue on workflow failure
+        if: failure()
+        run: |
+          source /tmp/sync-helpers.sh
+          echo "同步上游的 Actions 运行出错：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /tmp/fail.md
+          open_issue "上游同步流程运行出错（run ${{ github.run_id }}）" /tmp/fail.md
