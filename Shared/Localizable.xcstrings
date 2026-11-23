@@ -53,23 +53,6 @@
         }
       }
     }, 
-    "%d of %d" : {
-      "comment" : "Results selection and count", 
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new", 
-            "value" : "%1$d of %2$d"
-          }
-        }, 
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "%1$d / %2$d"
-          }
-        }
-      }
-    }, 
     "%d unread" : {
       "comment" : "Unread", 
       "localizations" : {
@@ -2683,17 +2666,6 @@
         }
       }
     }, 
-    "Mark As Read" : {
-      "comment" : "Mark As Read", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "标为已读"
-          }
-        }
-      }
-    }, 
     "Mark as Starred" : {
       "comment" : "Command", 
       "localizations" : {
@@ -3141,17 +3113,6 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "暂无错误记录"
-          }
-        }
-      }
-    }, 
-    "No results" : {
-      "comment" : "No results", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "无结果"
           }
         }
       }
@@ -5542,17 +5503,6 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "你可以在系统偏好设置中启用 NetNewsWire 通知。"
-          }
-        }
-      }
-    }, 
-    "You can turn this confirmation off in Settings." : {
-      "comment" : "You can turn this confirmation off in Settings.", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "你可以在设置中关闭此确认提示。"
           }
         }
       }

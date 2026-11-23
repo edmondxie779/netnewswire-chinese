@@ -536,7 +536,7 @@ final class MainTimelineViewController: UIViewController, UndoableCommandRunner 
 		let articlesToMark = coordinator.articles
 
 		if let source = sender as? UIBarButtonItem {
-			MarkAsReadAlertController.confirm(self, coordinator: coordinator, confirmTitle: title, sourceType: source) { [weak self] in
+			MarkAsReadAlertController.confirm(self, confirmTitle: title, sourceType: source) { [weak self] in
 				self?.coordinator?.markAsReadAndShowSidebar(articlesToMark)
 			}
 		}
@@ -549,7 +549,7 @@ final class MainTimelineViewController: UIViewController, UndoableCommandRunner 
 				return
 			}
 
-			MarkAsReadAlertController.confirm(self, coordinator: coordinator, confirmTitle: title, sourceType: contentView) { [weak self] in
+			MarkAsReadAlertController.confirm(self, confirmTitle: title, sourceType: contentView) { [weak self] in
 				self?.coordinator?.markAsReadAndShowSidebar(articlesToMark)
 			}
 		}
@@ -1405,7 +1405,7 @@ extension MainTimelineViewController {
 		let title = NSLocalizedString("Mark Above as Read", comment: "Command")
 		let image = Assets.Images.markAboveAsRead
 		let action = UIAction(title: title, image: image) { [weak self] _ in
-			MarkAsReadAlertController.confirm(self, coordinator: self?.coordinator, confirmTitle: title, sourceType: contentView) { [weak self] in
+			MarkAsReadAlertController.confirm(self, confirmTitle: title, sourceType: contentView) { [weak self] in
 				self?.markAboveAsRead(article)
 			}
 		}
@@ -1430,7 +1430,7 @@ extension MainTimelineViewController {
 		let title = NSLocalizedString("Mark Below as Read", comment: "Command")
 		let image = Assets.Images.markBelowAsRead
 		let action = UIAction(title: title, image: image) { [weak self] _ in
-			MarkAsReadAlertController.confirm(self, coordinator: self?.coordinator, confirmTitle: title, sourceType: contentView) { [weak self] in
+			MarkAsReadAlertController.confirm(self, confirmTitle: title, sourceType: contentView) { [weak self] in
 				self?.markBelowAsRead(article)
 			}
 		}
@@ -1448,7 +1448,7 @@ extension MainTimelineViewController {
 		}
 
 		let action = UIAlertAction(title: title, style: .default) { [weak self] _ in
-			MarkAsReadAlertController.confirm(self, coordinator: self?.coordinator, confirmTitle: title, sourceType: contentView, cancelCompletion: cancel) { [weak self] in
+			MarkAsReadAlertController.confirm(self, confirmTitle: title, sourceType: contentView, cancelCompletion: cancel) { [weak self] in
 				self?.markAboveAsRead(article)
 				completion(true)
 			}
@@ -1467,7 +1467,7 @@ extension MainTimelineViewController {
 		}
 
 		let action = UIAlertAction(title: title, style: .default) { [weak self] _ in
-			MarkAsReadAlertController.confirm(self, coordinator: self?.coordinator, confirmTitle: title, sourceType: contentView, cancelCompletion: cancel) { [weak self] in
+			MarkAsReadAlertController.confirm(self, confirmTitle: title, sourceType: contentView, cancelCompletion: cancel) { [weak self] in
 				self?.markBelowAsRead(article)
 				completion(true)
 			}
@@ -1518,9 +1518,7 @@ extension MainTimelineViewController {
 			return nil
 		}
 
-		let fetchedArticles = feed.fetchArticles()
-		let articles = Array(fetchedArticles)
-		guard articles.canMarkAllAsRead(), let collectionView, let contentView = collectionView.cellForItem(at: indexPath)?.contentView else {
+		guard feed.unreadCount > 0, let collectionView, let contentView = collectionView.cellForItem(at: indexPath)?.contentView else {
 			return nil
 		}
 
@@ -1528,8 +1526,9 @@ extension MainTimelineViewController {
 		let title = NSString.localizedStringWithFormat(localizedMenuText as NSString, feed.nameForDisplay) as String
 
 		let action = UIAction(title: title, image: Assets.Images.markAllAsRead) { [weak self] _ in
-			MarkAsReadAlertController.confirm(self, coordinator: self?.coordinator, confirmTitle: title, sourceType: contentView) { [weak self] in
-				self?.markAllAsRead(articles)
+			MarkAsReadAlertController.confirm(self, confirmTitle: title, sourceType: contentView) { [weak self] in
+				let articles = feed.fetchUnreadArticles()
+				self?.markAllAsRead(Array(articles))
 			}
 		}
 		return action
@@ -1553,7 +1552,7 @@ extension MainTimelineViewController {
 		}
 
 		let action = UIAlertAction(title: title, style: .default) { [weak self] _ in
-			MarkAsReadAlertController.confirm(self, coordinator: self?.coordinator, confirmTitle: title, sourceType: contentView, cancelCompletion: cancel) { [weak self] in
+			MarkAsReadAlertController.confirm(self, confirmTitle: title, sourceType: contentView, cancelCompletion: cancel) { [weak self] in
 				self?.markAllAsRead(articles)
 				completion(true)
 			}
