@@ -352,6 +352,16 @@ final class ArticlesTable: DatabaseTable, Sendable {
 		}
 	}
 
+	/// Delete statuses for articles the sync service reports as deleted.
+	public func deleteStatuses(articleIDs: Set<String>, completion: DatabaseCompletionBlock?) {
+		self.queue.runInTransaction { database in
+			self.statusesTable.removeStatuses(articleIDs, database)
+			DispatchQueue.main.async {
+				completion?()
+			}
+		}
+	}
+
 	// MARK: - Unread Counts
 
 	/// Calls `completion` with nil if the query fails, so a failure doesn’t zero every unread count.

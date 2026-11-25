@@ -114,6 +114,17 @@
         }
       }
     }, 
+    "A username and password are required." : {
+      "comment" : "Credentials Error", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "请填写用户名和密码。"
+          }
+        }
+      }
+    }, 
     "A web browser will open the Feedly login for you to authorize access." : {
       "comment" : "Alert informative text when adding a Feedly account and waiting for authorization from the user.", 
       "localizations" : {
@@ -459,6 +470,28 @@
         }
       }
     }, 
+    "An API token is required." : {
+      "comment" : "Credentials Error", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "请填写 API 令牌。"
+          }
+        }
+      }
+    }, 
+    "API Token" : {
+      "comment" : "Miniflux authentication mode and token field", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "API 令牌"
+          }
+        }
+      }
+    }, 
     "API URL: https://fresh.rss.net/api/greader.php" : {
       "comment" : "FreshRSS API Helper", 
       "localizations" : {
@@ -466,6 +499,17 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "API 地址：https://fresh.rss.net/api/greader.php"
+          }
+        }
+      }
+    }, 
+    "API URL: https://miniflux.example.com" : {
+      "comment" : "Miniflux API Helper", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "API 地址：https://miniflux.example.com"
           }
         }
       }
@@ -687,6 +731,17 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "作者网站：\n%@"
+          }
+        }
+      }
+    }, 
+    "Authentication" : {
+      "comment" : "Miniflux authentication mode picker", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "认证方式"
           }
         }
       }
@@ -1453,6 +1508,17 @@
         }
       }
     }, 
+    "Don’t have a Miniflux instance?" : {
+      "comment" : "No Miniflux", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "还没有 Miniflux 服务？"
+          }
+        }
+      }
+    }, 
     "Don’t have a The Old Reader account?" : {
       "comment" : "No OldReader", 
       "localizations" : {
@@ -1933,7 +1999,7 @@
       }
     }, 
     "Find out more" : {
-      "comment" : "No FreshRSS Button", 
+      "comment" : "No FreshRSS Button\nNo Miniflux Button", 
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2301,6 +2367,17 @@
         }
       }
     }, 
+    "https://miniflux.example.com" : {
+      "comment" : "Miniflux API Helper", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "https://miniflux.example.com"
+          }
+        }
+      }
+    }, 
     "iCloud" : {
       "comment" : "iCloud Account", 
       "localizations" : {
@@ -2423,6 +2500,17 @@
         }
       }
     }, 
+    "Invalid credentials." : {
+      "comment" : "Credentials Error", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "登录凭据无效。"
+          }
+        }
+      }
+    }, 
     "Invalid email/password combination." : {
       "comment" : "Credentials Error", 
       "localizations" : {
@@ -2430,6 +2518,17 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "电子邮箱或密码错误。"
+          }
+        }
+      }
+    }, 
+    "Invalid username/password combination, or invalid API token." : {
+      "comment" : "Credentials Error", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "用户名或密码错误，或 API 令牌无效。"
           }
         }
       }
@@ -4313,6 +4412,28 @@
         }
       }
     }, 
+    "Sign in to your Miniflux account." : {
+      "comment" : "Miniflux", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "登录你的 Miniflux 账户。"
+          }
+        }
+      }
+    }, 
+    "Sign in to your Miniflux instance and sync your feeds across your devices. Your credentials will be encrypted and stored in Keychain.\n\nDon’t have a Miniflux instance?" : {
+      "comment" : "Miniflux", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "登录你的 Miniflux 服务，在设备之间同步订阅。登录凭据将加密保存在钥匙串中。\n\n还没有 Miniflux 服务？"
+          }
+        }
+      }
+    }, 
     "Sign in to your NewsBlur account and sync your feeds across your devices. Your username and password will be encrypted and stored in Keychain.\n\nDon’t have a NewsBlur account?" : {
       "comment" : "NewsBlur", 
       "localizations" : {
@@ -4718,6 +4839,17 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "已存在使用此用户名的 Feedbin 账户。"
+          }
+        }
+      }
+    }, 
+    "There is already a Miniflux account for this user on this server." : {
+      "comment" : "Duplicate Error", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "此服务器上已存在该用户的 Miniflux 账户。"
           }
         }
       }
@@ -5364,6 +5496,17 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "请填写用户名和密码。"
+          }
+        }
+      }
+    }, 
+    "Username and Password" : {
+      "comment" : "Miniflux authentication mode", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "用户名和密码"
           }
         }
       }
