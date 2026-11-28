@@ -12,16 +12,17 @@ import Secrets
 
 @MainActor final class MinifluxAPICaller {
 
-	// Miniflux rejects limit values above 1000 for /v1/entries with HTTP 400, so stay under that.
 	static let entriesPageSize = 500
 	// Miniflux caps /v1/entries/ids at MaxEntryIDsLimit (10000) per response, so page at that size.
 	static let entryIDsPageSize = 10000
 	static let statusChunkSize = 1000
 	private static let entryIDsScanAttempts = 3
+	private static let feedAlreadyExistsMessage = "already exists"
+	private static let jsonContentType = "application/json; charset=utf-8"
+	private static let xmlContentType = "text/xml; charset=utf-8"
 
 	private static let minimumVersion = MinifluxVersion(2, 0, 49)
-	// /v1/entries/ids and batch starred updates require this newer version; below it,
-	// MinifluxAPICaller transparently falls back to paged /v1/entries and per-entry toggles.
+	/// For /v1/entries/ids and batch starred updates.
 	private static let entryIDsMinimumVersion = MinifluxVersion(2, 3, 2)
 
 	private let session = URLSession.makeWebserviceSession()
@@ -99,17 +100,9 @@ import Secrets
 		return validatedCredentials
 	}
 
-	/// Re-detects the server version and persists it to account settings, so
-	/// `supportsEntryIDsEndpoint`/`supportsBatchStarredUpdates` pick up a server upgrade
-	/// without the account being recreated. Called once per `refreshAll()`, from a point
-	/// where `accountSettings` is guaranteed set. Best-effort: any failure just leaves the
-	/// previously detected version (if any) in place, and gating already treats an unknown
-	/// version conservatively.
+	/// Saves the server version, so a server upgrade is noticed. On failure, the previous version stays.
 	func detectServerVersion() async {
-		guard let apiBaseURL else {
-			return
-		}
-		guard let response = try? await fetchVersionResponse(endpoint: apiBaseURL) else {
+		guard let response: MinifluxVersionResponse = try? await fetch("version") else {
 			return
 		}
 		accountSettings?.detectedServerVersion = response.version
@@ -121,7 +114,7 @@ import Secrets
 
 	func createCategory(title: String) async throws -> MinifluxCategory {
 		var request = try makeRequest(path: "categories")
-		request.addValue("application/json; charset=utf-8", forHTTPHeaderField: HTTPRequestHeader.contentType)
+		request.addValue(Self.jsonContentType, forHTTPHeaderField: HTTPRequestHeader.contentType)
 
 		let payload = try JSONEncoder().encode(MinifluxCategoryPayload(title: title))
 		let (_, category) = try await session.send(request: request, method: HTTPMethod.post, data: payload, resultType: MinifluxCategory.self)
@@ -132,11 +125,11 @@ import Secrets
 		return category
 	}
 
-	func renameCategory(categoryID: Int64, title: String) async throws {
+	func renameCategory(categoryID: Int, title: String) async throws {
 		try await session.send(request: makeRequest(path: "categories/\(categoryID)"), method: HTTPMethod.put, payload: MinifluxCategoryPayload(title: title))
 	}
 
-	func deleteCategory(categoryID: Int64) async throws {
+	func deleteCategory(categoryID: Int) async throws {
 		try await session.send(request: makeRequest(path: "categories/\(categoryID)"), method: HTTPMethod.delete)
 	}
 
@@ -144,70 +137,63 @@ import Secrets
 		try await fetch("feeds")
 	}
 
-	/// On failure, attempts to decode a `MinifluxErrorResponse` from the response body to distinguish
-	/// “feed already exists” from other errors. Miniflux has no machine-readable error code for this,
-	/// so this is a heuristic based on the human-readable `error_message` text. Any other decodable
-	/// server error is surfaced as `MinifluxError.serverError` with the server's message; otherwise
-	/// the failure is reported as a plain HTTP error.
-	func createFeed(url urlString: String, categoryID: Int64) async throws -> Int64 {
+	/// Miniflux has no error code for an existing feed, so the error message text is the only way to tell.
+	func createFeed(url urlString: String, categoryID: Int) async throws -> Int {
 		var request = try makeRequest(path: "feeds")
-		request.addValue("application/json; charset=utf-8", forHTTPHeaderField: HTTPRequestHeader.contentType)
-		request.httpMethod = HTTPMethod.post
-		request.httpBody = try JSONEncoder().encode(MinifluxCreateFeed(feedURL: urlString, categoryID: categoryID))
+		request.addValue(Self.jsonContentType, forHTTPHeaderField: HTTPRequestHeader.contentType)
+		let payload = try JSONEncoder().encode(MinifluxCreateFeed(feedURL: urlString, categoryID: categoryID))
 
-		let (data, urlResponse) = try await session.data(for: request)
-
-		guard (200...399).contains(urlResponse.forcedStatusCode) else {
-			if let errorResponse = try? JSONDecoder().decode(MinifluxErrorResponse.self, from: data) {
-				if errorResponse.errorMessage.contains("already exists") {
-					throw AccountError.createErrorAlreadySubscribed
-				}
-				throw MinifluxError.serverError(message: errorResponse.errorMessage)
+		do {
+			let (_, response) = try await session.send(request: request, method: HTTPMethod.post, data: payload, resultType: MinifluxCreateFeedResponse.self)
+			guard let response else {
+				throw WebserviceError.noData
 			}
-			throw WebserviceError.httpError(status: urlResponse.forcedStatusCode, responseBody: nil)
+			return response.feedID
+		} catch WebserviceError.httpError(let status, let responseBody?) {
+			guard let errorResponse = try? JSONDecoder().decode(MinifluxErrorResponse.self, from: Data(responseBody.utf8)) else {
+				throw WebserviceError.httpError(status: status, responseBody: responseBody)
+			}
+			if errorResponse.errorMessage.contains(Self.feedAlreadyExistsMessage) {
+				throw AccountError.createErrorAlreadySubscribed
+			}
+			throw MinifluxError.serverError(message: errorResponse.errorMessage)
 		}
-
-		guard !data.isEmpty else {
-			throw WebserviceError.noData
-		}
-		let response = try JSONDecoder().decode(MinifluxCreateFeedResponse.self, from: data)
-		return response.feedID
 	}
 
-	func retrieveFeed(feedID: Int64) async throws -> MinifluxFeed {
+	func retrieveFeed(feedID: Int) async throws -> MinifluxFeed {
 		try await fetch("feeds/\(feedID)")
 	}
 
-	func renameFeed(feedID: Int64, title: String) async throws {
+	func renameFeed(feedID: Int, title: String) async throws {
 		try await session.send(request: makeRequest(path: "feeds/\(feedID)"), method: HTTPMethod.put, payload: MinifluxUpdateFeed(title: title, categoryID: nil))
 	}
 
-	func moveFeed(feedID: Int64, categoryID: Int64) async throws {
+	func moveFeed(feedID: Int, categoryID: Int) async throws {
 		try await session.send(request: makeRequest(path: "feeds/\(feedID)"), method: HTTPMethod.put, payload: MinifluxUpdateFeed(title: nil, categoryID: categoryID))
 	}
 
-	func deleteFeed(feedID: Int64) async throws {
+	func deleteFeed(feedID: Int) async throws {
 		try await session.send(request: makeRequest(path: "feeds/\(feedID)"), method: HTTPMethod.delete)
 	}
 
 	func retrieveEntries(offset: Int, changedAfter: Date?, publishedAfter: Date?) async throws -> MinifluxEntriesResponse {
 		var query = Self.entriesPageQueryItems(offset: offset)
 		if let changedAfter {
-			query.append(URLQueryItem(name: "changed_after", value: String(Int(changedAfter.timeIntervalSince1970))))
+			query.append(URLQueryItem(name: QueryName.changedAfter, value: String(Int(changedAfter.timeIntervalSince1970))))
 		}
 		if let publishedAfter {
-			query.append(URLQueryItem(name: "published_after", value: String(Int(publishedAfter.timeIntervalSince1970))))
+			query.append(URLQueryItem(name: QueryName.publishedAfter, value: String(Int(publishedAfter.timeIntervalSince1970))))
 		}
 
 		return try await fetch("entries", query: query)
 	}
 
-	func retrieveEntries(feedID: Int64, offset: Int) async throws -> MinifluxEntriesResponse {
+	func retrieveEntries(feedID: Int, offset: Int) async throws -> MinifluxEntriesResponse {
 		try await fetch("feeds/\(feedID)/entries", query: Self.entriesPageQueryItems(offset: offset))
 	}
 
 	/// Returns `nil` if the entry has been removed server-side.
-	func retrieveEntry(entryID: Int64) async throws -> MinifluxEntry? {
+	func retrieveEntry(entryID: Int) async throws -> MinifluxEntry? {
 		do {
 			return try await fetch("entries/\(entryID)")
 		} catch {
@@ -218,23 +204,20 @@ import Secrets
 		}
 	}
 
-	func retrieveUnreadEntryIDs() async throws -> Set<Int64> {
-		try await retrieveEntryIDs(matching: [URLQueryItem(name: "status", value: "unread")])
+	func retrieveUnreadEntryIDs() async throws -> Set<Int> {
+		try await retrieveEntryIDs(matching: [URLQueryItem(name: QueryName.status, value: MinifluxEntryStatus.unread.rawValue)])
 	}
 
-	func retrieveStarredEntryIDs() async throws -> Set<Int64> {
-		try await retrieveEntryIDs(matching: [URLQueryItem(name: "starred", value: "true")])
+	func retrieveStarredEntryIDs() async throws -> Set<Int> {
+		try await retrieveEntryIDs(matching: [URLQueryItem(name: QueryName.starred, value: QueryValue.true)])
 	}
 
-	func updateEntries(entryIDs: [Int64], read: Bool) async throws {
-		try await updateEntries(entryIDs: entryIDs, payload: MinifluxUpdateEntriesPayload(entryIDs: entryIDs, status: read ? "read" : "unread", starred: nil))
+	func updateEntries(entryIDs: [Int], read: Bool) async throws {
+		try await updateEntries(entryIDs: entryIDs, payload: MinifluxUpdateEntriesPayload(entryIDs: entryIDs, status: read ? .read : .unread, starred: nil))
 	}
 
-	/// Uses the batch endpoint on servers that support it (2.3.2+), where `starred` is
-	/// absolute state, not a toggle. Older servers (down to the 2.0.49 floor) only expose a
-	/// per-entry bookmark *toggle* (`PUT /v1/entries/{id}/bookmark`), which flips state
-	/// rather than setting it — see `updateEntriesStarredFallback`.
-	func updateEntries(entryIDs: [Int64], starred: Bool) async throws {
+	/// Older servers have no batch starred update, only a per-entry toggle.
+	func updateEntries(entryIDs: [Int], starred: Bool) async throws {
 		guard !entryIDs.isEmpty else {
 			return
 		}
@@ -248,7 +231,7 @@ import Secrets
 	/// Synchronous — Miniflux’s OPML import doesn’t require polling for completion.
 	func importOPML(opmlData: Data) async throws {
 		var request = try makeRequest(path: "import")
-		request.addValue("text/xml; charset=utf-8", forHTTPHeaderField: HTTPRequestHeader.contentType)
+		request.addValue(Self.xmlContentType, forHTTPHeaderField: HTTPRequestHeader.contentType)
 
 		_ = try await session.send(request: request, method: HTTPMethod.post, payload: opmlData)
 	}
@@ -258,8 +241,25 @@ import Secrets
 
 private extension MinifluxAPICaller {
 
-	/// Builds an authenticated request for `v1/<path>`, honoring `suspend()`. Auth for both
-	/// `.minifluxBasic` and `.minifluxAPIToken` is applied inside `URLRequest(url:credentials:)`.
+	struct QueryName {
+		static let afterEntryID = "after_entry_id"
+		static let changedAfter = "changed_after"
+		static let direction = "direction"
+		static let limit = "limit"
+		static let offset = "offset"
+		static let order = "order"
+		static let publishedAfter = "published_after"
+		static let starred = "starred"
+		static let status = "status"
+	}
+
+	struct QueryValue {
+		static let ascending = "asc"
+		static let id = "id"
+		static let `true` = "true"
+	}
+
+	/// Builds an authenticated request for `v1/<path>`, honoring `suspend()`.
 	func makeRequest(path: String, query: [URLQueryItem] = []) throws -> URLRequest {
 		if suspended {
 			throw WebserviceError.suspended
@@ -276,11 +276,8 @@ private extension MinifluxAPICaller {
 		return result
 	}
 
-	/// Pages through `/v1/entries/ids` on servers that support it (2.3.2+), which caps each
-	/// response at `entryIDsPageSize`; older servers (down to the 2.0.49 floor) fall back to
-	/// paging `/v1/entries` instead. `filter` is `status=unread`, `starred=true`, etc. — the
-	/// same filter works on both endpoints.
-	func retrieveEntryIDs(matching filter: [URLQueryItem]) async throws -> Set<Int64> {
+	/// Uses `/v1/entries/ids` when the server has it, and pages `/v1/entries` otherwise.
+	func retrieveEntryIDs(matching filter: [URLQueryItem]) async throws -> Set<Int> {
 		guard supportsEntryIDsEndpoint else {
 			return try await retrieveEntryIDsByPagingEntries(matching: filter)
 		}
@@ -294,15 +291,15 @@ private extension MinifluxAPICaller {
 	}
 
 	/// Returns nil if `total` changed during the scan, since offset paging may then have skipped IDs.
-	private func scanEntryIDs(matching filter: [URLQueryItem]) async throws -> Set<Int64>? {
-		var entryIDs = Set<Int64>()
+	func scanEntryIDs(matching filter: [URLQueryItem]) async throws -> Set<Int>? {
+		var entryIDs = Set<Int>()
 		var offset = 0
 		var firstTotal: Int?
 
 		while true {
 			let query = filter + [
-				URLQueryItem(name: "limit", value: String(Self.entryIDsPageSize)),
-				URLQueryItem(name: "offset", value: String(offset))
+				URLQueryItem(name: QueryName.limit, value: String(Self.entryIDsPageSize)),
+				URLQueryItem(name: QueryName.offset, value: String(offset))
 			]
 			let response: MinifluxEntryIDsResponse = try await fetch("entries/ids", query: query)
 
@@ -321,21 +318,18 @@ private extension MinifluxAPICaller {
 		return entryIDs
 	}
 
-	/// Fallback for servers below `entryIDsMinimumVersion`, which lack `/v1/entries/ids`.
-	/// Used only for the initial sync's one-time reconciliation (see
-	/// `MinifluxAccountDelegate.reconcileAllArticleStatuses`) — never on routine refreshes —
-	/// so a full paginated scan here is a one-time cost, not a recurring one.
-	func retrieveEntryIDsByPagingEntries(matching filter: [URLQueryItem]) async throws -> Set<Int64> {
-		var entryIDs = Set<Int64>()
-		var afterEntryID: Int64 = 0
+	/// For servers without `/v1/entries/ids`.
+	func retrieveEntryIDsByPagingEntries(matching filter: [URLQueryItem]) async throws -> Set<Int> {
+		var entryIDs = Set<Int>()
+		var afterEntryID = 0
 
 		// Keyset paging, since offset paging skips IDs when the filtered set shrinks during the scan.
 		while true {
 			let query = filter + [
-				URLQueryItem(name: "order", value: "id"),
-				URLQueryItem(name: "direction", value: "asc"),
-				URLQueryItem(name: "limit", value: String(Self.entriesPageSize)),
-				URLQueryItem(name: "after_entry_id", value: String(afterEntryID))
+				URLQueryItem(name: QueryName.order, value: QueryValue.id),
+				URLQueryItem(name: QueryName.direction, value: QueryValue.ascending),
+				URLQueryItem(name: QueryName.limit, value: String(Self.entriesPageSize)),
+				URLQueryItem(name: QueryName.afterEntryID, value: String(afterEntryID))
 			]
 			let response: MinifluxEntriesResponse = try await fetch("entries", query: query)
 			guard let lastEntryID = response.entries.map(\.entryID).max() else {
@@ -351,24 +345,19 @@ private extension MinifluxAPICaller {
 		return entryIDs
 	}
 
-	func updateEntries(entryIDs: [Int64], payload: MinifluxUpdateEntriesPayload) async throws {
+	func updateEntries(entryIDs: [Int], payload: MinifluxUpdateEntriesPayload) async throws {
 		guard !entryIDs.isEmpty else {
 			return
 		}
 		try await session.send(request: makeRequest(path: "entries"), method: HTTPMethod.put, payload: payload)
 	}
 
-	/// Fallback for servers below `entryIDsMinimumVersion`: fetches each entry's current
-	/// starred state and only calls the toggle when it actually differs from `starred`.
-	/// This is the important part — the toggle endpoint flips state, so blindly calling it
-	/// on an entry already in the desired state would set it *wrong*. Fetch-then-compare
-	/// also makes retries safe: if this throws partway through and the caller resets the
-	/// whole chunk for a retry, re-running re-checks each entry's now-current state and
-	/// skips the ones already fixed, rather than toggling them a second time.
-	func updateEntriesStarredFallback(entryIDs: [Int64], starred: Bool) async throws {
+	/// Older servers only have a toggle, so this toggles only entries whose starred state differs.
+	/// Not atomic: a change made elsewhere between the fetch and the toggle gets flipped.
+	func updateEntriesStarredFallback(entryIDs: [Int], starred: Bool) async throws {
 		for entryID in entryIDs {
 			guard let entry = try await retrieveEntry(entryID: entryID) else {
-				continue // Gone server-side; nothing to update.
+				continue
 			}
 			// Unknown state can’t be toggled safely, and the correct state needs no toggle.
 			guard let entryStarred = entry.starred, entryStarred != starred else {
@@ -378,21 +367,20 @@ private extension MinifluxAPICaller {
 		}
 	}
 
-	func toggleBookmark(entryID: Int64) async throws {
+	func toggleBookmark(entryID: Int) async throws {
 		try await session.send(request: makeRequest(path: "entries/\(entryID)/bookmark"), method: HTTPMethod.put)
 	}
 
 	static func entriesPageQueryItems(offset: Int) -> [URLQueryItem] {
 		[
-			URLQueryItem(name: "order", value: "id"),
-			URLQueryItem(name: "direction", value: "asc"),
-			URLQueryItem(name: "limit", value: String(entriesPageSize)),
-			URLQueryItem(name: "offset", value: String(offset))
+			URLQueryItem(name: QueryName.order, value: QueryValue.id),
+			URLQueryItem(name: QueryName.direction, value: QueryValue.ascending),
+			URLQueryItem(name: QueryName.limit, value: String(entriesPageSize)),
+			URLQueryItem(name: QueryName.offset, value: String(offset))
 		]
 	}
 
-	/// Requires the server response before this call to have already confirmed credentials
-	/// are valid — a plain 404 here means the server predates `/v1/version` (< 2.0.49).
+	/// The caller has already validated the credentials, so a 404 means the server predates `/v1/version` (2.0.49).
 	func validateServerVersion(endpoint: URL) async throws {
 		let response: MinifluxVersionResponse
 		do {
@@ -422,15 +410,12 @@ private extension MinifluxAPICaller {
 		return versionResponse
 	}
 
-	/// `nil` until a `detectServerVersion()` call has succeeded at least once this app
-	/// session (or in a previous one, since it's persisted).
+	/// Nil until `detectServerVersion()` has succeeded once.
 	var detectedVersion: MinifluxVersion? {
-		accountSettings?.detectedServerVersion.flatMap(MinifluxVersion.init(string:))
+		MinifluxVersion(string: accountSettings?.detectedServerVersion)
 	}
 
-	/// `false` (the safe default) when the version hasn't been detected yet, failed to
-	/// parse, or is below `entryIDsMinimumVersion` — the fallback works on every server
-	/// this app supports (down to the 2.0.49 floor), so "unknown" must resolve to "fall back."
+	/// False when the version is unknown, since the fallback works on every supported server.
 	var supportsEntryIDsEndpoint: Bool {
 		guard let detectedVersion else {
 			return false
@@ -439,7 +424,8 @@ private extension MinifluxAPICaller {
 	}
 
 	var supportsBatchStarredUpdates: Bool {
-		supportsEntryIDsEndpoint // Same 2.3.2 threshold as the ids endpoint.
+		// Batch starred updates arrived in 2.3.2, along with the ids endpoint.
+		supportsEntryIDsEndpoint
 	}
 
 	func apiURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {

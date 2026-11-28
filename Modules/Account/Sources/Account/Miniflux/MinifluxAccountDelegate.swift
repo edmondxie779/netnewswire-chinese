@@ -7,9 +7,7 @@
 //
 
 import Foundation
-import ActivityLog
 import Articles
-import ErrorLog
 import FeedFinder
 import RSCore
 import RSParser
@@ -63,6 +61,10 @@ import Secrets
 	private static let missingArticlesFetchLimit = 250
 	/// Fetched entries are saved, and deleted statuses removed, after each chunk of this many.
 	private static let missingArticlesChunkSize = 50
+	/// Categories, feeds, local folder and feed sync, the first article page, and missing articles.
+	private static let refreshAllTaskCount = 5
+	/// Finding the feed and creating it on the server.
+	private static let createFeedTaskCount = 2
 
 	init(dataFolder: String) {
 		let databaseFilePath = (dataFolder as NSString).appendingPathComponent("Sync.sqlite3")
@@ -82,11 +84,7 @@ import Secrets
 		retrieveCredentialsIfNeeded(account)
 
 		refreshProgress.reset()
-		// Five tasks completed across refreshAccount and refreshArticlesAndStatuses:
-		// categories fetch, feeds fetch, local folder/feed sync, the first page of
-		// articles, and missing articles. Continuation article pages add their own
-		// tasks as they're fetched.
-		refreshProgress.addTasks(5)
+		refreshProgress.addTasks(Self.refreshAllTaskCount)
 
 		do {
 			try await account.logActivity(kind: .refreshAll) {
@@ -104,8 +102,8 @@ import Secrets
 			return false
 		}
 		let sentCount = try await sendArticleStatusReturningCount(for: account)
-		let refreshedCount = try await refreshArticles(account)
-		return sentCount > 0 || refreshedCount > 0
+		let changedStatusCount = try await refreshArticles(account)
+		return sentCount > 0 || changedStatusCount > 0
 	}
 
 	func sendArticleStatus() async throws {
@@ -138,36 +136,18 @@ import Secrets
 				var sentCount = 0
 				var savedError: Error?
 
-				do {
-					sentCount += try await sendEntryStatuses(pendingEntryIDs(in: syncStatuses, key: .read, flag: true), key: .read) {
-						try await caller.updateEntries(entryIDs: $0, read: true)
+				for (key, flag) in [(SyncStatus.Key.read, true), (.read, false), (.starred, true), (.starred, false)] {
+					do {
+						sentCount += try await sendEntryStatuses(pendingEntryIDs(in: syncStatuses, key: key, flag: flag), key: key) { entryIDs in
+							if key == .read {
+								try await caller.updateEntries(entryIDs: entryIDs, read: flag)
+							} else {
+								try await caller.updateEntries(entryIDs: entryIDs, starred: flag)
+							}
+						}
+					} catch {
+						savedError = error
 					}
-				} catch {
-					savedError = error
-				}
-
-				do {
-					sentCount += try await sendEntryStatuses(pendingEntryIDs(in: syncStatuses, key: .read, flag: false), key: .read) {
-						try await caller.updateEntries(entryIDs: $0, read: false)
-					}
-				} catch {
-					savedError = error
-				}
-
-				do {
-					sentCount += try await sendEntryStatuses(pendingEntryIDs(in: syncStatuses, key: .starred, flag: true), key: .starred) {
-						try await caller.updateEntries(entryIDs: $0, starred: true)
-					}
-				} catch {
-					savedError = error
-				}
-
-				do {
-					sentCount += try await sendEntryStatuses(pendingEntryIDs(in: syncStatuses, key: .starred, flag: false), key: .starred) {
-						try await caller.updateEntries(entryIDs: $0, starred: false)
-					}
-				} catch {
-					savedError = error
 				}
 
 				if let savedError {
@@ -176,13 +156,12 @@ import Secrets
 				return sentCount
 			}
 		} catch {
-			postSyncError(error, account: account, operation: "Sending article status")
+			account.postSyncError(error, operation: "Sending article status")
 			throw error
 		}
 	}
 
-	/// Status changes arrive via the changed_after entries fetch (statuses ride along
-	/// with content), so refreshing statuses is the same operation as refreshing articles.
+	/// Statuses come with the changed_after entries fetch, so this is the same as refreshing articles.
 	func refreshArticleStatus() async throws {
 		guard let account else {
 			return
@@ -190,9 +169,7 @@ import Secrets
 		_ = try await refreshArticles(account)
 	}
 
-	/// Full reconciliation against the server's complete unread/starred ID sets. Used only
-	/// on initial sync now — routine refreshes get status changes from the changed_after
-	/// entries fetch. Returns the count of articles whose local state actually changed.
+	/// Reconciles against the server’s full unread and starred ID sets. Returns the number of statuses changed.
 	private func reconcileAllArticleStatuses(for account: Account) async throws -> Int {
 		Self.logger.info("Miniflux: Refreshing article statuses")
 
@@ -221,7 +198,7 @@ import Secrets
 
 			Self.logger.info("Miniflux: Finished refreshing article statuses")
 			if let refreshError {
-				postSyncError(refreshError, account: account, operation: "Refreshing article status")
+				account.postSyncError(refreshError, operation: "Refreshing article status")
 				throw refreshError
 			}
 			return changedCount
@@ -251,7 +228,7 @@ import Secrets
 				Self.logger.info("Miniflux: Finished importing OPML")
 			}
 		} catch {
-			Self.logger.info("Miniflux: OPML import failed: \(error.localizedDescription)")
+			Self.logger.error("Miniflux: OPML import failed: \(error.localizedDescription)")
 			throw AccountError.wrapped(error, account)
 		}
 	}
@@ -265,7 +242,9 @@ import Secrets
 		}
 
 		refreshProgress.addTask()
-		defer { refreshProgress.completeTask() }
+		defer {
+			refreshProgress.completeTask()
+		}
 
 		do {
 			return try await account.logActivity(kind: .createFolder, detail: name) {
@@ -285,12 +264,14 @@ import Secrets
 		guard let account else {
 			return
 		}
-		guard let externalID = folder.externalID, let categoryID = Int64(externalID) else {
+		guard let externalID = folder.externalID, let categoryID = Int(externalID) else {
 			throw AccountError.invalidParameter
 		}
 
 		refreshProgress.addTask()
-		defer { refreshProgress.completeTask() }
+		defer {
+			refreshProgress.completeTask()
+		}
 
 		do {
 			try await account.logActivity(kind: .renameFolder, detail: folder.name) {
@@ -306,32 +287,26 @@ import Secrets
 		guard let account else {
 			return
 		}
-		guard let externalID = folder.externalID, let categoryID = Int64(externalID) else {
+		guard let externalID = folder.externalID, let categoryID = Int(externalID) else {
 			throw AccountError.invalidParameter
 		}
 
-		try await account.logActivity(kind: .removeFolder, detail: folder.name) {
-			refreshProgress.addTasks(folder.topLevelFeeds.count)
+		refreshProgress.addTask()
+		defer {
+			refreshProgress.completeTask()
+		}
 
-			for feed in folder.topLevelFeeds {
-				defer { refreshProgress.completeTask() }
-
-				guard let feedExternalID = feed.externalID, let feedID = Int64(feedExternalID) else {
-					continue
-				}
-				do {
-					try await caller.deleteFeed(feedID: feedID)
+		do {
+			try await account.logActivity(kind: .removeFolder, detail: folder.name) {
+				// Deleting a category also deletes its feeds.
+				try await caller.deleteCategory(categoryID: categoryID)
+				for feed in folder.topLevelFeeds {
 					account.clearFeedSettings(feed)
-				} catch {
-					Self.logger.error("Miniflux: Remove feed error: \(error.localizedDescription)")
-					postSyncError(error, account: account, operation: "Removing feed")
 				}
+				account.removeFolderFromTree(folder)
 			}
-
-			// Miniflux refuses to delete a category that still has feeds — throw rather than
-			// silently leaving the folder gone locally but present on the server.
-			try await caller.deleteCategory(categoryID: categoryID)
-			account.removeFolderFromTree(folder)
+		} catch {
+			throw AccountError.wrapped(error, account)
 		}
 	}
 
@@ -344,8 +319,8 @@ import Secrets
 			throw AccountError.invalidParameter
 		}
 
-		refreshProgress.addTasks(2)
-		var uncompletedTasks = 2
+		refreshProgress.addTasks(Self.createFeedTaskCount)
+		var uncompletedTasks = Self.createFeedTaskCount
 		defer {
 			while uncompletedTasks > 0 {
 				refreshProgress.completeTask()
@@ -379,12 +354,14 @@ import Secrets
 		guard let account else {
 			return
 		}
-		guard let externalID = feed.externalID, let feedID = Int64(externalID) else {
+		guard let externalID = feed.externalID, let feedID = Int(externalID) else {
 			throw AccountError.invalidParameter
 		}
 
 		refreshProgress.addTask()
-		defer { refreshProgress.completeTask() }
+		defer {
+			refreshProgress.completeTask()
+		}
 
 		do {
 			try await account.logActivity(kind: .renameFeed, detail: feed.url) {
@@ -400,12 +377,14 @@ import Secrets
 		guard let account else {
 			return
 		}
-		guard let externalID = feed.externalID, let feedID = Int64(externalID) else {
+		guard let externalID = feed.externalID, let feedID = Int(externalID) else {
 			throw AccountError.invalidParameter
 		}
 
 		refreshProgress.addTask()
-		defer { refreshProgress.completeTask() }
+		defer {
+			refreshProgress.completeTask()
+		}
 
 		do {
 			try await account.logActivity(kind: .removeFeed, detail: feed.url) {
@@ -424,15 +403,17 @@ import Secrets
 		}
 		guard
 			let feedExternalID = feed.externalID,
-			let feedID = Int64(feedExternalID),
+			let feedID = Int(feedExternalID),
 			let destinationExternalID = (destinationContainer as? Folder)?.externalID,
-			let destinationCategoryID = Int64(destinationExternalID)
+			let destinationCategoryID = Int(destinationExternalID)
 		else {
 			throw AccountError.invalidParameter
 		}
 
 		refreshProgress.addTask()
-		defer { refreshProgress.completeTask() }
+		defer {
+			refreshProgress.completeTask()
+		}
 
 		do {
 			try await account.logActivity(kind: .moveFeed, detail: feed.url) {
@@ -453,15 +434,17 @@ import Secrets
 			if let folder = container as? Folder {
 				guard
 					let feedExternalID = feed.externalID,
-					let feedID = Int64(feedExternalID),
+					let feedID = Int(feedExternalID),
 					let folderExternalID = folder.externalID,
-					let destinationCategoryID = Int64(folderExternalID)
+					let destinationCategoryID = Int(folderExternalID)
 				else {
 					throw AccountError.invalidParameter
 				}
 
 				refreshProgress.addTask()
-				defer { refreshProgress.completeTask() }
+				defer {
+					refreshProgress.completeTask()
+				}
 
 				do {
 					try await caller.moveFeed(feedID: feedID, categoryID: destinationCategoryID)
@@ -498,28 +481,33 @@ import Secrets
 		guard let folderName = folder.name, !folderName.isEmpty else {
 			throw AccountError.invalidParameter
 		}
-		try await account.logActivity(kind: .restoreFolder, detail: folderName) {
-			// The category was deleted on the server along with the folder, so re-create it before restoring its feeds.
-			do {
-				let category = try await caller.createCategory(title: folderName)
-				folder.externalID = String(category.categoryID)
-			} catch {
-				Self.logger.error("Miniflux: Restore folder category error: \(error.localizedDescription)")
-				throw error
-			}
-
-			for feed in folder.topLevelFeeds {
-				folder.topLevelFeeds.remove(feed)
-
+		do {
+			try await account.logActivity(kind: .restoreFolder, detail: folderName) {
+				// The category was deleted on the server along with the folder, so re-create it before restoring its feeds.
 				do {
-					try await restoreFeed(feed: feed, container: folder)
+					let category = try await caller.createCategory(title: folderName)
+					folder.externalID = String(category.categoryID)
 				} catch {
-					Self.logger.error("Miniflux: Restore folder feed error: \(error.localizedDescription)")
-					postSyncError(error, account: account, operation: "Restoring feed")
+					Self.logger.error("Miniflux: Restore folder category error: \(error.localizedDescription)")
+					throw error
+				}
+
+				// The folder goes in the tree first, so each restored feed finds it by externalID.
+				let feeds = folder.topLevelFeeds
+				folder.topLevelFeeds.removeAll()
+				account.addFolderToTree(folder)
+
+				for feed in feeds {
+					do {
+						try await restoreFeed(feed: feed, container: folder)
+					} catch {
+						Self.logger.error("Miniflux: Restore folder feed error: \(error.localizedDescription)")
+						account.postSyncError(error, operation: "Restoring feed")
+					}
 				}
 			}
-
-			account.addFolderToTree(folder)
+		} catch {
+			throw AccountError.wrapped(error, account)
 		}
 	}
 
@@ -537,7 +525,9 @@ import Secrets
 			NotificationCenter.default.post(name: .AccountDidQueueArticleStatuses, object: account)
 		}
 		if let count = try? await syncDatabase.selectPendingCount(), count > Self.sendStatusBatchThreshold {
-			try await sendArticleStatus()
+			// Flush in the background so marking doesn't block the caller
+			// <https://github.com/Ranchero-Software/NetNewsWire/issues/5273>
+			Task { try? await sendArticleStatus() }
 		}
 	}
 
@@ -546,6 +536,10 @@ import Secrets
 			return
 		}
 		retrieveCredentialsIfNeeded(account)
+
+		// Clear statuses left selected by a send that was in progress when the app quit.
+		// <https://github.com/Ranchero-Software/NetNewsWire/issues/4280>
+		syncDatabase.resetAllSelectedForProcessing()
 	}
 
 	func accountWillBeDeleted() {
@@ -625,7 +619,7 @@ private extension MinifluxAccountDelegate {
 				return (folders: categories.count, feeds: feeds.count)
 			})
 		} catch {
-			postSyncError(error, account: account, operation: "Refreshing account")
+			account.postSyncError(error, operation: "Refreshing account")
 			throw error
 		}
 	}
@@ -633,14 +627,13 @@ private extension MinifluxAccountDelegate {
 	func refreshArticlesAndStatuses(_ account: Account) async throws {
 		let isInitialSync = accountSettings?.lastRefreshCompletedDate == nil
 
-		try await sendArticleStatus()
+		// A failed status send must not block fetching new articles.
+		// <https://discourse.netnewswire.com/t/no-feed-updates/336>
+		try? await sendArticleStatus()
 		_ = try await refreshArticles(account, reportProgress: true)
 
 		if isInitialSync {
-			// The first sync's published_after window misses older unread/starred entries;
-			// a one-time full ID reconciliation (plus refreshMissingArticles right after)
-			// pulls them in. Order matters: reconcile must run before refreshMissingArticles
-			// so the statuses it creates get their articles downloaded.
+			// The published_after window misses older unread and starred entries. Reconcile first, so refreshMissingArticles downloads them.
 			_ = try await reconcileAllArticleStatuses(for: account)
 		}
 
@@ -649,9 +642,7 @@ private extension MinifluxAccountDelegate {
 		refreshProgress.reset()
 	}
 
-	/// Every Miniflux category maps to exactly one NNW folder, matched by externalID
-	/// (the category's server-side id), not by name — so a category rename doesn't
-	/// orphan the folder.
+	/// Folders match categories by externalID, not name, so renaming a category keeps its folder.
 	func syncFolders(_ account: Account, _ categories: [MinifluxCategory]) {
 		assert(Thread.isMainThread)
 
@@ -697,10 +688,7 @@ private extension MinifluxAccountDelegate {
 			for folder in folders {
 				for feed in folder.topLevelFeeds {
 					if !feedExternalIDs.contains(feed.feedID) {
-						// Clear settings before removing so a feed re-added at this URL — which
-						// Miniflux assigns a new numeric feedID — doesn't inherit the stale
-						// feedID from the settings cache/database and end up unable to match
-						// incoming articles.
+						// Clear settings first, so a feed re-added at this URL, which gets a new feedID, doesn’t inherit the old one.
 						account.clearFeedSettings(feed)
 						folder.removeFeedFromTreeAtTopLevel(feed)
 					}
@@ -719,22 +707,18 @@ private extension MinifluxAccountDelegate {
 			}
 		}
 
-		// Add any feeds we don't have and update any we do. New feeds are added directly
-		// to their folder in syncFeedFolderRelationship — Miniflux guarantees every feed
-		// has exactly one category.
+		// Update existing feeds. syncFeedFolderRelationship adds new ones to their folders.
 		for feed in feeds {
 			let feedExternalID = String(feed.feedID)
 			if let existingFeed = account.existingFeed(withFeedID: feedExternalID) {
 				existingFeed.name = feed.title
 				existingFeed.editedName = nil
 				existingFeed.homePageURL = feed.siteURL
-				existingFeed.externalID = feedExternalID
 			}
 		}
 	}
 
-	/// No `folderRelationship` bookkeeping — a feed's folder membership is derived
-	/// entirely from its `category.id` on each refresh.
+	/// A feed’s folder comes from its category on every refresh, so there’s no `folderRelationship` bookkeeping.
 	func syncFeedFolderRelationship(_ account: Account, _ feeds: [MinifluxFeed]) {
 		assert(Thread.isMainThread)
 
@@ -742,16 +726,17 @@ private extension MinifluxAccountDelegate {
 
 		let folderDict = externalIDToFolderDictionary(with: account.folders)
 		let feedsByCategoryID = feeds.reduce(into: [String: [MinifluxFeed]]()) { dict, feed in
-			guard let categoryID = feed.category?.categoryID else { return }
+			guard let categoryID = feed.category?.categoryID else {
+				return
+			}
 			dict[String(categoryID), default: []].append(feed)
 		}
 
-		// Feeds with no category (a lenient decode) must not be silently pulled out of
-		// their existing folder — track them so the removal loop below leaves them alone.
+		// A feed with no category (a lenient decode) stays in its current folder.
 		var feedIDsWithNoCategory = Set<String>()
 		for feed in feeds where feed.category == nil {
 			feedIDsWithNoCategory.insert(String(feed.feedID))
-			Self.logger.error("Miniflux: Feed \(feed.feedID) has no category; leaving local folder placement unchanged")
+			Self.logger.error("Miniflux: Feed \(feed.feedID) has no category, so its local folder placement is unchanged")
 		}
 
 		for (categoryExternalID, folder) in folderDict {
@@ -800,36 +785,34 @@ private extension MinifluxAccountDelegate {
 		return Dictionary(pairs, uniquingKeysWith: { first, _ in first })
 	}
 
+	/// Returns the number of local statuses changed.
 	@discardableResult
 	func refreshArticles(_ account: Account, reportProgress: Bool = false) async throws -> Int {
 		Self.logger.info("Miniflux: Refreshing articles")
 
 		do {
 			let fetchStartDate = Date()
-			let isInitialSync = accountSettings?.lastRefreshCompletedDate == nil
-			let changedAfter = isInitialSync ? nil : accountSettings?.lastArticleFetchStartTime?.addingTimeInterval(-Self.changedAfterClockSkewMargin)
-			// With no changed_after, as after an OPML import, limit the fetch to recent history.
+			let changedAfter = accountSettings?.lastArticleFetchStartTime?.addingTimeInterval(-Self.changedAfterClockSkewMargin)
+			// With no changed_after, as on the first sync or after an OPML import, limit the fetch to recent history.
 			let publishedAfter = changedAfter == nil ? Calendar.current.date(byAdding: .month, value: -Self.articleHistoryMonths, to: fetchStartDate) : nil
 
-			let processedCount = try await account.logActivity(kind: .refreshArticles, successMessage: { "\($0) articles" }, {
-				try await refreshArticlesPage(account: account, changedAfter: changedAfter, publishedAfter: publishedAfter, reportProgress: reportProgress)
+			let counts = try await account.logActivity(kind: .refreshArticles, successMessage: { "\($0.entryCount) articles" }, {
+				try await refreshArticlePages(account: account, changedAfter: changedAfter, publishedAfter: publishedAfter, reportProgress: reportProgress)
 			})
 
 			accountSettings?.lastArticleFetchStartTime = fetchStartDate
-			return processedCount
+			return counts.changedStatusCount
 		} catch {
-			postSyncError(error, account: account, operation: "Refreshing articles")
+			account.postSyncError(error, operation: "Refreshing articles")
 			throw error
 		}
 	}
 
-	/// When `reportProgress` is true, the caller must have pre-added one task for the
-	/// first page (keeping the progress denominator stable for single-page refreshes);
-	/// continuation pages add their own. Background status syncs pass false so the
-	/// progress UI stays quiet.
-	func refreshArticlesPage(account: Account, changedAfter: Date?, publishedAfter: Date?, reportProgress: Bool) async throws -> Int {
+	/// With `reportProgress`, the caller adds the first page’s progress task, and later pages add their own.
+	func refreshArticlePages(account: Account, changedAfter: Date?, publishedAfter: Date?, reportProgress: Bool) async throws -> (entryCount: Int, changedStatusCount: Int) {
 		var offset = 0
 		var totalEntriesProcessed = 0
+		var changedStatusCount = 0
 		var isFirstPage = true
 
 		while true {
@@ -837,8 +820,7 @@ private extension MinifluxAccountDelegate {
 				refreshProgress.addTask()
 			}
 			isFirstPage = false
-			// Complete the task on every exit from this iteration — including a thrown
-			// fetch error — so a task is never stranded.
+			// Complete the task on every exit, including a thrown error.
 			defer {
 				if reportProgress {
 					refreshProgress.completeTask()
@@ -846,12 +828,12 @@ private extension MinifluxAccountDelegate {
 			}
 
 			let pageOffset = offset
-			let response = try await account.logActivity(kind: .refreshArticles, detail: ActivityLog.shared.nextTaskNumberString(), successMessage: { "\($0.entries.count) articles" }, {
+			let response = try await account.logRefreshPage(kind: .refreshArticles, message: { "\($0.entries.count) articles" }, {
 				try await caller.retrieveEntries(offset: pageOffset, changedAfter: changedAfter, publishedAfter: publishedAfter)
 			})
 
 			totalEntriesProcessed += response.entries.count
-			await processEntries(account: account, entries: response.entries)
+			changedStatusCount += await processEntries(account: account, entries: response.entries)
 
 			offset += response.entries.count
 			if response.entries.isEmpty || offset >= response.total {
@@ -859,7 +841,7 @@ private extension MinifluxAccountDelegate {
 			}
 		}
 
-		return totalEntriesProcessed
+		return (totalEntriesProcessed, changedStatusCount)
 	}
 
 	func refreshMissingArticles(_ account: Account) async throws {
@@ -874,77 +856,84 @@ private extension MinifluxAccountDelegate {
 
 			let fetchedArticleIDs = await account.fetchArticleIDsForStatusesWithoutArticlesNewerThanCutoffDateAsync()
 			// Newest first, since Miniflux fetches one entry per request.
-			let entryIDs = fetchedArticleIDs.compactMap { Int64($0) }.sorted(by: >).prefix(Self.missingArticlesFetchLimit)
-
-			var shouldStopFetching = false
+			let entryIDs = fetchedArticleIDs.compactMap { Int($0) }.sorted(by: >).prefix(Self.missingArticlesFetchLimit)
 
 			for chunk in Array(entryIDs).chunked(into: Self.missingArticlesChunkSize) {
-				var entries = [MinifluxEntry]()
-				var serverDeletedArticleIDs = Set<String>()
-
-				for entryID in chunk {
-					do {
-						if let entry = try await caller.retrieveEntry(entryID: entryID) {
-							entries.append(entry)
-						} else {
-							serverDeletedArticleIDs.insert(String(entryID))
-						}
-					} catch {
-						savedError = error
-						Self.logger.error("Miniflux: Refresh missing articles error: \(error.localizedDescription)")
-						// An HTTP error is about this entry, so skip it. Anything else, such as no connection, would fail every remaining request.
-						if case WebserviceError.httpError = error {
-							continue
-						}
-						shouldStopFetching = true
-						break
-					}
+				let result: (entries: [MinifluxEntry], serverDeletedArticleIDs: Set<String>)
+				do {
+					result = try await account.logRefreshPage(kind: .refreshMissingArticles, message: { "\($0.entries.count) articles" }, {
+						try await retrieveMissingEntries(entryIDs: chunk)
+					})
+				} catch {
+					savedError = error
+					break
 				}
 
-				await processEntries(account: account, entries: entries)
+				await processEntries(account: account, entries: result.entries)
 
 				// A 404 means the entry is gone on the server, so its status would be re-requested forever.
-				if !serverDeletedArticleIDs.isEmpty {
-					Self.logger.info("Miniflux: Deleting statuses for \(serverDeletedArticleIDs.count) entries removed on the server")
-					await account.deleteStatuses(articleIDs: serverDeletedArticleIDs)
-				}
-
-				if shouldStopFetching {
-					break
+				if !result.serverDeletedArticleIDs.isEmpty {
+					Self.logger.info("Miniflux: Deleting statuses for \(result.serverDeletedArticleIDs.count) entries removed on the server")
+					await account.deleteStatuses(articleIDs: result.serverDeletedArticleIDs)
 				}
 			}
 
 			if let savedError {
-				postSyncError(savedError, account: account, operation: "Refreshing missing articles")
+				account.postSyncError(savedError, operation: "Refreshing missing articles")
 				throw savedError
 			}
 		}
 	}
 
-	func processEntries(account: Account, entries: [MinifluxEntry]) async {
+	/// Fetches each entry, one request per entry. Returns the entries found and the IDs of entries deleted on the server.
+	func retrieveMissingEntries(entryIDs: [Int]) async throws -> (entries: [MinifluxEntry], serverDeletedArticleIDs: Set<String>) {
+		var entries = [MinifluxEntry]()
+		var serverDeletedArticleIDs = Set<String>()
+
+		for entryID in entryIDs {
+			do {
+				if let entry = try await caller.retrieveEntry(entryID: entryID) {
+					entries.append(entry)
+				} else {
+					serverDeletedArticleIDs.insert(String(entryID))
+				}
+			} catch {
+				Self.logger.error("Miniflux: Refresh missing articles error: \(error.localizedDescription)")
+				// An HTTP error is about this entry, so skip it without failing the refresh. Anything else, such as no connection, would fail every remaining request.
+				if case WebserviceError.httpError = error {
+					continue
+				}
+				throw error
+			}
+		}
+
+		return (entries, serverDeletedArticleIDs)
+	}
+
+	/// Returns the number of local statuses changed.
+	@discardableResult
+	func processEntries(account: Account, entries: [MinifluxEntry]) async -> Int {
 		let parsedItems = mapEntriesToParsedItems(entries: entries)
 		let feedIDsAndItems = Dictionary(grouping: parsedItems, by: { item in item.feedURL }).mapValues { Set($0) }
 		await account.updateAsync(feedIDsAndItems: feedIDsAndItems, defaultRead: true)
-		await applyEntryStatuses(account: account, entries: entries)
+		return await applyEntryStatuses(account: account, entries: entries)
 	}
 
-	/// Statuses ride along on the changed_after entries fetch — Miniflux bumps changed_at
-	/// whenever an entry's status or starred state changes — so applying them per page
-	/// replaces the per-refresh full ID scans. Pending local changes are always excluded:
-	/// they must win, so server state is never applied without first knowing what's pending.
-	func applyEntryStatuses(account: Account, entries: [MinifluxEntry]) async {
+	/// Applies statuses from the changed_after entries fetch, except pending local changes, which win. Returns the number of statuses changed.
+	@discardableResult
+	func applyEntryStatuses(account: Account, entries: [MinifluxEntry]) async -> Int {
 		guard !entries.isEmpty else {
-			return
+			return 0
 		}
 
 		let pendingReadArticleIDs = try? await syncDatabase.selectPendingReadStatusArticleIDs()
 		let pendingStarredArticleIDs = try? await syncDatabase.selectPendingStarredStatusArticleIDs()
 
 		if pendingReadArticleIDs == nil {
-			Self.logger.error("Miniflux: Sync database selectPendingReadStatusArticleIDs failed; skipping read status application")
+			Self.logger.error("Miniflux: Sync database selectPendingReadStatusArticleIDs failed, so read statuses won’t be applied")
 		}
 		if pendingStarredArticleIDs == nil {
-			Self.logger.error("Miniflux: Sync database selectPendingStarredStatusArticleIDs failed; skipping starred status application")
+			Self.logger.error("Miniflux: Sync database selectPendingStarredStatusArticleIDs failed, so starred statuses won’t be applied")
 		}
 
 		var unreadIDs = Set<String>()
@@ -954,9 +943,9 @@ private extension MinifluxAccountDelegate {
 
 		for entry in entries {
 			let articleID = String(entry.entryID)
-			if entry.status == "unread" {
+			if entry.status == .unread {
 				unreadIDs.insert(articleID)
-			} else if entry.status == "read" {
+			} else if entry.status == .read {
 				readIDs.insert(articleID)
 			}
 			if entry.starred == true {
@@ -966,14 +955,16 @@ private extension MinifluxAccountDelegate {
 			}
 		}
 
+		var changedCount = 0
 		if let pendingReadArticleIDs {
-			_ = await account.markAsUnreadAsync(articleIDs: unreadIDs.subtracting(pendingReadArticleIDs))
-			_ = await account.markAsReadAsync(articleIDs: readIDs.subtracting(pendingReadArticleIDs))
+			changedCount += await account.updateStatusesAsync(articleIDs: unreadIDs.subtracting(pendingReadArticleIDs), statusKey: .read, flag: false).count
+			changedCount += await account.updateStatusesAsync(articleIDs: readIDs.subtracting(pendingReadArticleIDs), statusKey: .read, flag: true).count
 		}
 		if let pendingStarredArticleIDs {
-			_ = await account.markAsStarredAsync(articleIDs: starredIDs.subtracting(pendingStarredArticleIDs))
-			_ = await account.markAsUnstarredAsync(articleIDs: unstarredIDs.subtracting(pendingStarredArticleIDs))
+			changedCount += await account.updateStatusesAsync(articleIDs: starredIDs.subtracting(pendingStarredArticleIDs), statusKey: .starred, flag: true).count
+			changedCount += await account.updateStatusesAsync(articleIDs: unstarredIDs.subtracting(pendingStarredArticleIDs), statusKey: .starred, flag: false).count
 		}
+		return changedCount
 	}
 
 	func mapEntriesToParsedItems(entries: [MinifluxEntry]) -> Set<ParsedItem> {
@@ -985,7 +976,7 @@ private extension MinifluxAccountDelegate {
 		return Set(parsedItems)
 	}
 
-	func syncArticleReadState(account: Account, entryIDs: Set<Int64>) async -> Int {
+	func syncArticleReadState(account: Account, entryIDs: Set<Int>) async -> Int {
 		guard let pendingArticleIDs = try? await syncDatabase.selectPendingReadStatusArticleIDs() else {
 			Self.logger.error("Miniflux: Sync database selectPendingReadStatusArticleIDs failed")
 			return 0
@@ -1000,7 +991,7 @@ private extension MinifluxAccountDelegate {
 		)
 	}
 
-	func syncArticleStarredState(account: Account, entryIDs: Set<Int64>) async -> Int {
+	func syncArticleStarredState(account: Account, entryIDs: Set<Int>) async -> Int {
 		guard let pendingArticleIDs = try? await syncDatabase.selectPendingStarredStatusArticleIDs() else {
 			Self.logger.error("Miniflux: Sync database selectPendingStarredStatusArticleIDs failed")
 			return 0
@@ -1015,11 +1006,8 @@ private extension MinifluxAccountDelegate {
 		)
 	}
 
-	/// Read/unread and starred/unstarred changes all funnel through here. Chunks `entryIDs`,
-	/// pushes each chunk via `update`, then clears the sync-database rows on success or resets
-	/// them on failure. Miniflux’s update-entries call is absolute state (not a toggle), so
-	/// repeated sends are idempotent. Returns the count successfully sent.
-	func sendEntryStatuses(_ entryIDs: [Int64], key: SyncStatus.Key, update: (_ chunk: [Int64]) async throws -> Void) async throws -> Int {
+	/// Sends `entryIDs` in chunks, deleting their sync rows on success and resetting them on failure. Returns the count sent.
+	func sendEntryStatuses(_ entryIDs: [Int], key: SyncStatus.Key, update: (_ chunk: [Int]) async throws -> Void) async throws -> Int {
 		guard !entryIDs.isEmpty else {
 			return 0
 		}
@@ -1047,16 +1035,13 @@ private extension MinifluxAccountDelegate {
 	}
 
 	/// Numeric entry IDs of the pending sync statuses matching `key`/`flag`.
-	func pendingEntryIDs(in statuses: some Sequence<SyncStatus>, key: SyncStatus.Key, flag: Bool) -> [Int64] {
-		statuses.filter { $0.key == key && $0.flag == flag }.compactMap { Int64($0.articleID) }
+	func pendingEntryIDs(in statuses: some Sequence<SyncStatus>, key: SyncStatus.Key, flag: Bool) -> [Int] {
+		statuses.filter { $0.key == key && $0.flag == flag }.compactMap { Int($0.articleID) }
 	}
 
-	/// Resolves the category to use when creating a feed into `container`: the folder's
-	/// externalID if `container` is a Folder, otherwise the lowest-id category (used when
-	/// the UI hands us the account itself as the container, which Miniflux has no concept
-	/// of — every feed must belong to a category).
-	func categoryID(for container: Container) async throws -> Int64 {
-		if let folder = container as? Folder, let externalID = folder.externalID, let categoryID = Int64(externalID) {
+	/// The folder’s category, or the lowest-id category when `container` is the account, since every Miniflux feed needs one.
+	func categoryID(for container: Container) async throws -> Int {
+		if let folder = container as? Folder, let externalID = folder.externalID, let categoryID = Int(externalID) {
 			return categoryID
 		}
 
@@ -1068,7 +1053,7 @@ private extension MinifluxAccountDelegate {
 	}
 
 	@discardableResult
-	func createFeed(account: Account, feedID: Int64, name: String?, categoryID: Int64) async throws -> Feed {
+	func createFeed(account: Account, feedID: Int, name: String?, categoryID: Int) async throws -> Feed {
 		let minifluxFeed = try await caller.retrieveFeed(feedID: feedID)
 
 		let feed = account.createFeed(with: minifluxFeed.title, url: minifluxFeed.feedURL, feedID: String(feedID), homePageURL: minifluxFeed.siteURL)
@@ -1089,16 +1074,18 @@ private extension MinifluxAccountDelegate {
 				try await initialFeedDownload(account: account, feed: feed, feedID: feedID)
 			} catch {
 				Self.logger.error("Miniflux: Initial feed download failed: \(error.localizedDescription)")
-				postSyncError(error, account: account, operation: "Downloading feed articles")
+				account.postSyncError(error, operation: "Downloading feed articles")
 			}
 		}
 
 		return feed
 	}
 
-	func initialFeedDownload(account: Account, feed: Feed, feedID: Int64) async throws {
+	func initialFeedDownload(account: Account, feed: Feed, feedID: Int) async throws {
 		refreshProgress.addTask()
-		defer { refreshProgress.completeTask() }
+		defer {
+			refreshProgress.completeTask()
+		}
 
 		try await account.logActivity(kind: .refreshFeedContent(feedURL: feed.url), detail: feed.nameForDisplay) {
 			var offset = 0
@@ -1113,15 +1100,10 @@ private extension MinifluxAccountDelegate {
 			}
 		}
 	}
-
-	func postSyncError(_ error: Error, account: Account, operation: String, fileName: String = #fileID, functionName: String = #function, lineNumber: Int = #line) {
-		let errorLogUserInfo = ErrorLogUserInfoKey.userInfo(sourceName: account.nameForDisplay, sourceID: account.type.rawValue, operation: operation, errorMessage: AccountError.detailedErrorMessage(error), fileName: fileName, functionName: functionName, lineNumber: lineNumber)
-		NotificationCenter.default.post(name: .appDidEncounterError, object: self, userInfo: errorLogUserInfo)
-	}
 }
 
 extension MinifluxAccountDelegate {
-	func syncArticleState(entryIDs: Set<Int64>, pendingArticleIDs: Set<String>, currentArticleIDs: () async -> Set<String>, markOn: (Set<String>) async -> Set<String>, markOff: (Set<String>) async -> Set<String>) async -> Int {
+	func syncArticleState(entryIDs: Set<Int>, pendingArticleIDs: Set<String>, currentArticleIDs: () async -> Set<String>, markOn: (Set<String>) async -> Set<String>, markOff: (Set<String>) async -> Set<String>) async -> Int {
 		let serverArticleIDs = Set(entryIDs.map { String($0) })
 		let updatableArticleIDs = serverArticleIDs.subtracting(pendingArticleIDs)
 

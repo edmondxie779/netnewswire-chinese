@@ -114,17 +114,6 @@
         }
       }
     }, 
-    "A username and password are required." : {
-      "comment" : "Credentials Error", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "请填写用户名和密码。"
-          }
-        }
-      }
-    }, 
     "A web browser will open the Feedly login for you to authorize access." : {
       "comment" : "Alert informative text when adding a Feedly account and waiting for authorization from the user.", 
       "localizations" : {
@@ -482,7 +471,7 @@
       }
     }, 
     "API Token" : {
-      "comment" : "Miniflux authentication mode and token field", 
+      "comment" : "API Token", 
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -713,6 +702,17 @@
         }
       }
     }, 
+    "Authentication" : {
+      "comment" : "Authentication", 
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated", 
+            "value" : "认证方式"
+          }
+        }
+      }
+    }, 
     "Author‘s website:" : {
       "comment" : "Author's Website", 
       "localizations" : {
@@ -731,17 +731,6 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "作者网站：\n%@"
-          }
-        }
-      }
-    }, 
-    "Authentication" : {
-      "comment" : "Miniflux authentication mode picker", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "认证方式"
           }
         }
       }
@@ -791,7 +780,7 @@
       }
     }, 
     "Can’t Add iCloud Account" : {
-      "comment" : "CloudKit account setup failure description — iCloud Drive not enabled.", 
+      "comment" : "CloudKit account setup failure description — iCloud not available.", 
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1509,7 +1498,7 @@
       }
     }, 
     "Don’t have a Miniflux instance?" : {
-      "comment" : "No Miniflux", 
+      "comment" : "Don’t have a Miniflux instance?", 
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -1999,7 +1988,7 @@
       }
     }, 
     "Find out more" : {
-      "comment" : "No FreshRSS Button\nNo Miniflux Button", 
+      "comment" : "Find out more", 
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -2496,17 +2485,6 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "API 地址无效。"
-          }
-        }
-      }
-    }, 
-    "Invalid credentials." : {
-      "comment" : "Credentials Error", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "登录凭据无效。"
           }
         }
       }
@@ -3421,16 +3399,8 @@
         }
       }
     }, 
-    "Open Settings to configure iCloud and enable iCloud Drive." : {
-      "comment" : "CloudKit account setup recovery suggestion", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "打开设置，配置 iCloud 并启用 iCloud 云盘。"
-          }
-        }
-      }
+    "Open Settings to sign in to iCloud and turn on iCloud for NetNewsWire." : {
+      "comment" : "CloudKit account setup recovery suggestion"
     }, 
     "Open System Preferences" : {
       "comment" : "Open System Preferences", 
@@ -3454,16 +3424,8 @@
         }
       }
     }, 
-    "Open System Settings to configure iCloud and enable iCloud Drive." : {
-      "comment" : "CloudKit account setup recovery suggestion", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "打开系统设置，配置 iCloud 并启用 iCloud 云盘。"
-          }
-        }
-      }
+    "Open System Settings to sign in to iCloud and turn on iCloud for NetNewsWire." : {
+      "comment" : "CloudKit account setup recovery suggestion"
     }, 
     "Open Theme Folder" : {
       "comment" : "Open Theme Folder", 
@@ -3510,7 +3472,7 @@
       }
     }, 
     "Password" : {
-      "comment" : "Password field placeholder", 
+      "comment" : "Password", 
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -4324,16 +4286,8 @@
         }
       }
     }, 
-    "Sign in to your BazQux account and sync your feeds across your devices. Your username and password will be encrypted and stored in Keychain.\n\nDon’t have a BazQux account?" : {
-      "comment" : "BazQux", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "登录你的 BazQux 账户，在设备之间同步订阅。用户名和密码将加密保存在钥匙串中。\n\n还没有 BazQux 账户？"
-          }
-        }
-      }
+    "Sign in to your BazQux account and sync your feeds across your devices. Your username and password will be stored securely in your keychain.\n\nDon’t have a BazQux account?" : {
+      "comment" : "BazQux"
     }, 
     "Sign in to your BazQux account." : {
       "comment" : "BazQux", 
@@ -4346,16 +4300,8 @@
         }
       }
     }, 
-    "Sign in to your Feedbin account and sync your feeds across your devices. Your username and password will be encrypted and stored in Keychain.\n\nDon’t have a Feedbin account?" : {
-      "comment" : "Feedbin", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "登录你的 Feedbin 账户，在设备之间同步订阅。用户名和密码将加密保存在钥匙串中。\n\n还没有 Feedbin 账户？"
-          }
-        }
-      }
+    "Sign in to your Feedbin account and sync your feeds across your devices. Your username and password will be stored securely in your keychain.\n\nDon’t have a Feedbin account?" : {
+      "comment" : "Feedbin"
     }, 
     "Sign in to your Feedbin account." : {
       "comment" : "SignIn", 
@@ -4379,27 +4325,11 @@
         }
       }
     }, 
-    "Sign in to your FreshRSS instance and sync your feeds across your devices. Your username and password will be encrypted and stored in Keychain.\n\nDon’t have a FreshRSS instance?" : {
-      "comment" : "FreshRSS", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "登录你的 FreshRSS 服务，在设备之间同步订阅。用户名和密码将加密保存在钥匙串中。\n\n还没有 FreshRSS 服务？"
-          }
-        }
-      }
+    "Sign in to your FreshRSS instance and sync your feeds across your devices. Your username and password will be stored securely in your keychain.\n\nDon’t have a FreshRSS instance?" : {
+      "comment" : "FreshRSS"
     }, 
-    "Sign in to your Inoreader account and sync your feeds across your devices. Your username and password will be encrypted and stored in Keychain.\n\nDon’t have an Inoreader account?" : {
-      "comment" : "Inoreader", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "登录你的 Inoreader 账户，在设备之间同步订阅。用户名和密码将加密保存在钥匙串中。\n\n还没有 Inoreader 账户？"
-          }
-        }
-      }
+    "Sign in to your Inoreader account and sync your feeds across your devices. Your username and password will be stored securely in your keychain.\n\nDon’t have an Inoreader account?" : {
+      "comment" : "Inoreader"
     }, 
     "Sign in to your Inoreader account." : {
       "comment" : "Inoreader", 
@@ -4413,7 +4343,7 @@
       }
     }, 
     "Sign in to your Miniflux account." : {
-      "comment" : "Miniflux", 
+      "comment" : "Sign in to your Miniflux account.", 
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -4423,27 +4353,11 @@
         }
       }
     }, 
-    "Sign in to your Miniflux instance and sync your feeds across your devices. Your credentials will be encrypted and stored in Keychain.\n\nDon’t have a Miniflux instance?" : {
-      "comment" : "Miniflux", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "登录你的 Miniflux 服务，在设备之间同步订阅。登录凭据将加密保存在钥匙串中。\n\n还没有 Miniflux 服务？"
-          }
-        }
-      }
+    "Sign in to your Miniflux instance and sync your feeds across your devices. Your credentials will be stored securely in your keychain.\n\nDon’t have a Miniflux instance?" : {
+      "comment" : "Miniflux"
     }, 
-    "Sign in to your NewsBlur account and sync your feeds across your devices. Your username and password will be encrypted and stored in Keychain.\n\nDon’t have a NewsBlur account?" : {
-      "comment" : "NewsBlur", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "登录你的 NewsBlur 账户，在设备之间同步订阅。用户名和密码将加密保存在钥匙串中。\n\n还没有 NewsBlur 账户？"
-          }
-        }
-      }
+    "Sign in to your NewsBlur account and sync your feeds across your devices. Your username and password will be stored securely in your keychain.\n\nDon’t have a NewsBlur account?" : {
+      "comment" : "NewsBlur"
     }, 
     "Sign in to your NewsBlur account." : {
       "comment" : "SignIn", 
@@ -4456,16 +4370,8 @@
         }
       }
     }, 
-    "Sign in to your The Old Reader account and sync your feeds across your devices. Your username and password will be encrypted and stored in Keychain.\n\nDon’t have a The Old Reader account?" : {
-      "comment" : "TOR", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "登录你的 The Old Reader 账户，在设备之间同步订阅。用户名和密码将加密保存在钥匙串中。\n\n还没有 The Old Reader 账户？"
-          }
-        }
-      }
+    "Sign in to your The Old Reader account and sync your feeds across your devices. Your username and password will be stored securely in your keychain.\n\nDon’t have a The Old Reader account?" : {
+      "comment" : "TOR"
     }, 
     "Sign in to your The Old Reader account." : {
       "comment" : "The Old Reader", 
@@ -5489,6 +5395,9 @@
         }
       }
     }, 
+    "Username" : {
+      "comment" : "Username"
+    }, 
     "Username and password are required." : {
       "comment" : "Credentials Error", 
       "localizations" : {
@@ -5496,17 +5405,6 @@
           "stringUnit" : {
             "state" : "translated", 
             "value" : "请填写用户名和密码。"
-          }
-        }
-      }
-    }, 
-    "Username and Password" : {
-      "comment" : "Miniflux authentication mode", 
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated", 
-            "value" : "用户名和密码"
           }
         }
       }

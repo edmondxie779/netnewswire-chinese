@@ -2,6 +2,7 @@
 //  MinifluxAccountView.swift
 //  NetNewsWire-iOS
 //
+//  Created by Dave Marquard on 7/15/26.
 //  Copyright © 2026 Ranchero Software. All rights reserved.
 //
 
@@ -29,18 +30,19 @@ struct MinifluxAccountView: View {
 	var body: some View {
 		AccountSetupSheet(accountType: .miniflux, isWorking: isValidating) {
 			Section {
-				Picker(NSLocalizedString("Authentication", comment: "Miniflux authentication mode"), selection: $usesAPIToken) {
-					Text(NSLocalizedString("Username and Password", comment: "Miniflux authentication mode")).tag(false)
-					Text(NSLocalizedString("API Token", comment: "Miniflux authentication mode")).tag(true)
+				Picker(NSLocalizedString("Authentication", comment: "Authentication"), selection: $usesAPIToken) {
+					Text(NSLocalizedString("Password", comment: "Password")).tag(false)
+					Text(NSLocalizedString("API Token", comment: "API Token")).tag(true)
 				}
 				if usesAPIToken {
-					SecureField(NSLocalizedString("API Token", comment: "Miniflux API token"), text: $apiToken)
+					SecureField(NSLocalizedString("API Token", comment: "API Token"), text: $apiToken)
 				} else {
-					TextField(NSLocalizedString("Username or Email", comment: "Username field placeholder"), text: $username)
+					TextField(NSLocalizedString("Username", comment: "Username"), text: $username)
 						.textContentType(.username)
 						.textInputAutocapitalization(.never)
 						.autocorrectionDisabled()
-					SecureField(NSLocalizedString("Password", comment: "Password field placeholder"), text: $password)
+					SecureField(NSLocalizedString("Password", comment: "Password"), text: $password)
+						.textContentType(.password)
 				}
 				TextField(NSLocalizedString("API URL: https://miniflux.example.com", comment: "Miniflux API Helper"), text: $apiURLString)
 					.textContentType(.URL)
@@ -52,12 +54,14 @@ struct MinifluxAccountView: View {
 			}
 			Section {
 				Button(account == nil ? NSLocalizedString("Add Account", comment: "Add Account") : NSLocalizedString("Update Credentials", comment: "Update Credentials")) {
-					Task { await submit() }
+					Task {
+						await submit()
+					}
 				}
 				.frame(maxWidth: .infinity)
 				.disabled(!canSubmit || isValidating)
 			} footer: {
-				AccountSheetFooter(text: NSLocalizedString("Sign in to your Miniflux instance and sync your feeds across your devices. Your credentials will be encrypted and stored in Keychain.\n\nDon’t have a Miniflux instance?", comment: "Miniflux"), linkTitle: NSLocalizedString("Find Out More", comment: "Find Out More")) {
+				AccountSheetFooter(text: NSLocalizedString("Sign in to your Miniflux instance and sync your feeds across your devices. Your credentials will be stored securely in your keychain.\n\nDon’t have a Miniflux instance?", comment: "Miniflux"), linkTitle: NSLocalizedString("Find Out More", comment: "Find Out More")) {
 					isShowingSignUp = true
 				}
 			}
@@ -68,7 +72,9 @@ struct MinifluxAccountView: View {
 				SafariView(url: signUpURL)
 			}
 		}
-		.onAppear { loadExistingCredentials() }
+		.onAppear {
+			loadExistingCredentials()
+		}
 	}
 
 	private var canSubmit: Bool {
@@ -95,7 +101,7 @@ struct MinifluxAccountView: View {
 	}
 
 	@MainActor private func submit() async {
-		guard let endpoint = normalizedEndpointURL else {
+		guard let endpoint = Miniflux.normalizedEndpointURL(from: apiURLString) else {
 			errorMessage = NSLocalizedString("Invalid API URL.", comment: "Invalid API URL")
 			return
 		}
@@ -104,14 +110,16 @@ struct MinifluxAccountView: View {
 			: Credentials(type: .minifluxBasic, username: username.trimmingWhitespace, secret: password)
 
 		isValidating = true
-		defer { isValidating = false }
+		defer {
+			isValidating = false
+		}
 
 		do {
 			guard let validatedCredentials = try await Account.validateCredentials(type: .miniflux, credentials: credentials, endpoint: endpoint) else {
 				errorMessage = NSLocalizedString("Invalid username/password combination, or invalid API token.", comment: "Credentials Error")
 				return
 			}
-			if account == nil && AccountManager.shared.duplicateServiceAccount(type: .miniflux, endpointURL: endpoint, username: validatedCredentials.username) {
+			if account == nil && AccountManager.shared.duplicateServiceAccount(type: .miniflux, username: validatedCredentials.username, endpoint: endpoint) {
 				errorMessage = NSLocalizedString("There is already a Miniflux account for this user on this server.", comment: "Duplicate Error")
 				return
 			}
@@ -138,17 +146,5 @@ struct MinifluxAccountView: View {
 		} catch {
 			errorMessage = error.localizedDescription
 		}
-	}
-
-	private var normalizedEndpointURL: URL? {
-		var text = apiURLString.trimmingWhitespace
-		while text.hasSuffix("/") { text.removeLast() }
-		if text.hasSuffix("/v1") { text.removeLast(3) }
-		while text.hasSuffix("/") { text.removeLast() }
-		guard !text.isEmpty else {
-			return nil
-		}
-		if !text.contains("://") { text = "https://" + text }
-		return URL(string: text)
 	}
 }

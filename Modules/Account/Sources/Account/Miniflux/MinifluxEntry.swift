@@ -15,22 +15,23 @@ import RSParser
 //   "content":"...","author":"...","starred":false,"reading_time":1,"enclosures":[],
 //   "feed":{...},"tags":[...]}]}
 struct MinifluxEntry: Decodable, Sendable {
-	let entryID: Int64
-	let feedID: Int64
+	let entryID: Int
+	let feedID: Int
 	let title: String?
 	let url: String?
 	let author: String?
 	let contentHTML: String?
 	let datePublished: String?
 	let enclosures: [MinifluxEnclosure]?
-	let status: String?
+	let status: MinifluxEntryStatus?
 	let starred: Bool?
 
-	// Miniflux emits ISO8601 dates with fractional seconds and offsets, which JSONDecoder’s
-	// .iso8601 strategy can’t parse. Rather than lose the whole entry, decode the date as a
-	// String and let DateParser take care of it — exactly like FeedbinEntry.parsedDatePublished.
+	/// Decoded as a String, since JSONDecoder’s .iso8601 strategy can’t parse Miniflux’s fractional seconds.
 	var parsedDatePublished: Date? {
-		datePublished.flatMap { DateParser.date(from: $0) }
+		guard let datePublished else {
+			return nil
+		}
+		return DateParser.date(from: datePublished)
 	}
 
 	var attachments: [ParsedAttachment]? {
@@ -57,17 +58,23 @@ struct MinifluxEntry: Decodable, Sendable {
 
 	init(from decoder: Decoder) throws {
 		let container = try decoder.container(keyedBy: CodingKeys.self)
-		entryID = try container.decode(Int64.self, forKey: .entryID)
-		feedID = try container.decode(Int64.self, forKey: .feedID)
+		entryID = try container.decode(Int.self, forKey: .entryID)
+		feedID = try container.decode(Int.self, forKey: .feedID)
 		title = try? container.decode(String.self, forKey: .title)
 		url = try? container.decode(String.self, forKey: .url)
 		author = try? container.decode(String.self, forKey: .author)
 		contentHTML = try? container.decode(String.self, forKey: .contentHTML)
 		datePublished = try? container.decode(String.self, forKey: .datePublished)
 		enclosures = try? container.decode([MinifluxEnclosure].self, forKey: .enclosures)
-		status = try? container.decode(String.self, forKey: .status)
+		status = try? container.decode(MinifluxEntryStatus.self, forKey: .status)
 		starred = try? container.decode(Bool.self, forKey: .starred)
 	}
+}
+
+enum MinifluxEntryStatus: String, Codable, Sendable {
+	case read
+	case unread
+	case removed
 }
 
 struct MinifluxEnclosure: Decodable, Sendable {
@@ -101,9 +108,9 @@ struct MinifluxEnclosure: Decodable, Sendable {
 
 	init(from decoder: Decoder) throws {
 		let container = try decoder.container(keyedBy: CodingKeys.self)
-		url = try? container.decodeIfPresent(String.self, forKey: .url)
-		mimeType = try? container.decodeIfPresent(String.self, forKey: .mimeType)
-		size = try? container.decodeIfPresent(Int.self, forKey: .size)
+		url = try? container.decode(String.self, forKey: .url)
+		mimeType = try? container.decode(String.self, forKey: .mimeType)
+		size = try? container.decode(Int.self, forKey: .size)
 	}
 }
 
@@ -115,17 +122,17 @@ struct MinifluxEntriesResponse: Decodable, Sendable {
 // GET /v1/entries/ids?status=unread → {"total":1960,"entry_ids":[121634,121624,...]}
 struct MinifluxEntryIDsResponse: Decodable, Sendable {
 	let total: Int
-	let entryIDs: [Int64]
+	let entryIDs: [Int]
 
 	enum CodingKeys: String, CodingKey {
-		case total = "total"
+		case total
 		case entryIDs = "entry_ids"
 	}
 }
 
 struct MinifluxUpdateEntriesPayload: Encodable, Sendable {
-	let entryIDs: [Int64]
-	let status: String?
+	let entryIDs: [Int]
+	let status: MinifluxEntryStatus?
 	let starred: Bool?
 
 	enum CodingKeys: String, CodingKey {

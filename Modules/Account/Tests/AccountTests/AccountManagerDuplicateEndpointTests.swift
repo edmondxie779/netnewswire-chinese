@@ -6,49 +6,35 @@
 //  Copyright © 2026 Ranchero Software, LLC. All rights reserved.
 //
 
-import XCTest
+import Foundation
+import Testing
 @testable import Account
 
-@MainActor final class AccountManagerDuplicateEndpointTests: XCTestCase {
+@MainActor struct AccountManagerDuplicateEndpointTests {
 
-	func testCaseInsensitiveHostMatches() {
-		let a = AccountManager.normalizedEndpointForComparison(URL(string: "https://Miniflux.Example.com"))
-		let b = AccountManager.normalizedEndpointForComparison(URL(string: "https://miniflux.example.com"))
-		XCTAssertEqual(a, b)
+	@Test func hostCaseTrailingSlashSchemeAndDefaultPortAreIgnored() {
+		let endpoint = AccountManager.normalizedEndpointForComparison(URL(string: "https://miniflux.example.com"))
+		#expect(AccountManager.normalizedEndpointForComparison(URL(string: "https://Miniflux.Example.com/")) == endpoint)
+		#expect(AccountManager.normalizedEndpointForComparison(URL(string: "https://miniflux.example.com:443")) == endpoint)
+		#expect(AccountManager.normalizedEndpointForComparison(URL(string: "http://miniflux.example.com")) == endpoint)
 	}
 
-	func testTrailingSlashIsIgnored() {
-		let a = AccountManager.normalizedEndpointForComparison(URL(string: "https://miniflux.example.com/"))
-		let b = AccountManager.normalizedEndpointForComparison(URL(string: "https://miniflux.example.com"))
-		XCTAssertEqual(a, b)
+	@Test func differentPathsDoNotMatch() {
+		let first = AccountManager.normalizedEndpointForComparison(URL(string: "https://example.com/miniflux"))
+		let second = AccountManager.normalizedEndpointForComparison(URL(string: "https://example.com/other"))
+		#expect(first != second)
 	}
 
-	func testDifferentPathsDoNotMatch() {
-		let a = AccountManager.normalizedEndpointForComparison(URL(string: "https://example.com/miniflux"))
-		let b = AccountManager.normalizedEndpointForComparison(URL(string: "https://example.com/other"))
-		XCTAssertNotEqual(a, b)
-	}
-
-	func testNilURLNormalizesToNil() {
-		XCTAssertNil(AccountManager.normalizedEndpointForComparison(nil))
-	}
-
-	func testSameUsernameOnDifferentServersIsAllowed() {
+	@Test func duplicateRequiresSameUsernameAndServer() {
 		let existingAccount = TestAccountManager.shared.createAccount(type: .miniflux)
-		defer { TestAccountManager.shared.deleteAccount(existingAccount) }
+		defer {
+			TestAccountManager.shared.deleteAccount(existingAccount)
+		}
 		existingAccount.username = "admin"
 		existingAccount.endpointURL = URL(string: "https://first.miniflux.test")
 
-		XCTAssertFalse(AccountManager.duplicateServiceAccount(type: .miniflux, endpointURL: URL(string: "https://second.miniflux.test"), username: "admin", among: [existingAccount]))
-		XCTAssertTrue(AccountManager.duplicateServiceAccount(type: .miniflux, endpointURL: URL(string: "https://first.miniflux.test"), username: "admin", among: [existingAccount]))
-	}
-
-	func testDifferentUsernamesOnSameServerAreAllowed() {
-		let existingAccount = TestAccountManager.shared.createAccount(type: .miniflux)
-		defer { TestAccountManager.shared.deleteAccount(existingAccount) }
-		existingAccount.username = "admin"
-		existingAccount.endpointURL = URL(string: "https://first.miniflux.test")
-
-		XCTAssertFalse(AccountManager.duplicateServiceAccount(type: .miniflux, endpointURL: URL(string: "https://first.miniflux.test"), username: "claude", among: [existingAccount]))
+		#expect(AccountManager.duplicateServiceAccount(type: .miniflux, username: "admin", endpoint: URL(string: "https://first.miniflux.test"), among: [existingAccount]))
+		#expect(!AccountManager.duplicateServiceAccount(type: .miniflux, username: "admin", endpoint: URL(string: "https://second.miniflux.test"), among: [existingAccount]))
+		#expect(!AccountManager.duplicateServiceAccount(type: .miniflux, username: "claude", endpoint: URL(string: "https://first.miniflux.test"), among: [existingAccount]))
 	}
 }

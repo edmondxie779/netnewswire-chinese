@@ -2,25 +2,26 @@
 //  MinifluxSyncRegressionTests.swift
 //  AccountTests
 //
+//  Created by Dave Marquard on 7/15/26.
 //  Copyright © 2026 Ranchero Software, LLC. All rights reserved.
 //
 
-import XCTest
+import Foundation
+import Testing
 import RSWeb
 import SyncDatabase
 @testable import Account
 
-@MainActor final class MinifluxSyncRegressionTests: XCTestCase {
+@Suite(.isolatedWebserviceResponses) @MainActor struct MinifluxSyncRegressionTests {
 
-	override func setUp() {
-		TestingURLProtocol.reset()
-	}
-
-	func testFailedStarredSendKeepsItsQueuedStatusAfterReadSendSucceeds() async throws {
+	@Test func failedStarredSendKeepsItsQueuedStatusAfterReadSendSucceeds() async throws {
 		let account = TestAccountManager.shared.createAccount(type: .miniflux)
-		defer { TestAccountManager.shared.deleteAccount(account) }
+		defer {
+			TestAccountManager.shared.deleteAccount(account)
+		}
 		account.endpointURL = URL(string: "https://miniflux.test")
-		(account.delegate as! MinifluxAccountDelegate).accountSettings?.detectedServerVersion = "2.1.0"
+		let delegate = try #require(account.delegate as? MinifluxAccountDelegate)
+		delegate.accountSettings?.detectedServerVersion = "2.1.0"
 
 		let databasePath = (account.dataFolder as NSString).appendingPathComponent("Sync.sqlite3")
 		let database = SyncDatabase(databasePath: databasePath)
@@ -31,45 +32,82 @@ import SyncDatabase
 		TestingURLProtocol.setResponse(.init(statusCode: 204), forURLContaining: "/v1/entries", httpMethod: "PUT")
 		TestingURLProtocol.setResponse(.init(statusCode: 500), forURLContaining: "/v1/entries/5001", httpMethod: "GET")
 
-		do {
+		await #expect(throws: (any Error).self) {
 			try await account.sendArticleStatus()
-			XCTFail("Expected the starred update to fail")
-		} catch {
-			let pendingRead = try await database.selectPendingReadStatusArticleIDs()
-			let pendingStarred = try await database.selectPendingStarredStatusArticleIDs()
-			XCTAssertEqual(pendingRead, [])
-			XCTAssertEqual(pendingStarred, ["5001"])
 		}
+
+		let pendingRead = try await database.selectPendingReadStatusArticleIDs()
+		let pendingStarred = try await database.selectPendingStarredStatusArticleIDs()
+		#expect(pendingRead == [])
+		#expect(pendingStarred == ["5001"])
 	}
 
-	func testFailedInitialReconciliationIsRetried() async throws {
-		TestingURLProtocol.setResponse("/v1/version", file: "JSON/miniflux_version.json")
-		TestingURLProtocol.setResponse("/v1/categories", file: "JSON/miniflux_categories_initial.json")
-		TestingURLProtocol.setResponse("/v1/feeds", file: "JSON/miniflux_feeds_initial.json")
-		TestingURLProtocol.setResponse("/v1/entries?", file: "JSON/miniflux_entries_page1.json")
-		TestingURLProtocol.setResponse(.init(statusCode: 500), forURLContaining: "/v1/entries/ids")
+	@Test func failedInitialReconciliationIsRetried() async throws {
+		setFailingReconciliationResponses()
 
 		let account = TestAccountManager.shared.createAccount(type: .miniflux)
-		defer { TestAccountManager.shared.deleteAccount(account) }
+		defer {
+			TestAccountManager.shared.deleteAccount(account)
+		}
 		account.endpointURL = URL(string: "https://miniflux.test")
 
-		do {
+		await #expect(throws: (any Error).self) {
 			try await account.refreshAll()
-			XCTFail("Expected initial reconciliation to fail")
-		} catch {}
+		}
 		let firstAttemptCount = TestingURLProtocol.requestCount(forURLContaining: "/v1/entries/ids")
-		XCTAssertGreaterThan(firstAttemptCount, 0)
+		#expect(firstAttemptCount > 0)
 
 		TestingURLProtocol.setResponse("/v1/entries/ids", file: "JSON/miniflux_entry_ids.json")
 		try await account.refreshAll()
 
-		XCTAssertGreaterThan(TestingURLProtocol.requestCount(forURLContaining: "/v1/entries/ids"), firstAttemptCount)
+		#expect(TestingURLProtocol.requestCount(forURLContaining: "/v1/entries/ids") > firstAttemptCount)
 	}
 
-	func testInitialReconciliationPreservesPendingLocalStatus() async {
+	@Test func refreshAfterFailedInitialSyncSendsChangedAfter() async throws {
+		setFailingReconciliationResponses()
+
 		let account = TestAccountManager.shared.createAccount(type: .miniflux)
-		defer { TestAccountManager.shared.deleteAccount(account) }
-		let delegate = account.delegate as! MinifluxAccountDelegate
+		defer {
+			TestAccountManager.shared.deleteAccount(account)
+		}
+		account.endpointURL = URL(string: "https://miniflux.test")
+
+		await #expect(throws: (any Error).self) {
+			try await account.refreshAll()
+		}
+		#expect(TestingURLProtocol.requestCount(forURLContaining: "changed_after") == 0)
+
+		try? await account.refreshAll()
+
+		#expect(TestingURLProtocol.requestCount(forURLContaining: "changed_after") > 0)
+	}
+
+	@Test func missingArticleHTTPErrorDoesNotFailRefresh() async throws {
+		TestingURLProtocol.setResponse("/v1/version", file: "JSON/miniflux_version.json")
+		TestingURLProtocol.setResponse("/v1/categories", file: "JSON/miniflux_categories_initial.json")
+		TestingURLProtocol.setResponse("/v1/feeds", file: "JSON/miniflux_feeds_initial.json")
+		TestingURLProtocol.setResponse("/v1/entries?", file: "JSON/miniflux_entries_page1.json")
+		TestingURLProtocol.setResponse("/v1/entries/ids", file: "JSON/miniflux_entry_ids_missing_article.json")
+		TestingURLProtocol.setResponse(.init(statusCode: 500), forURLContaining: "/v1/entries/9001")
+
+		let account = TestAccountManager.shared.createAccount(type: .miniflux)
+		defer {
+			TestAccountManager.shared.deleteAccount(account)
+		}
+		account.endpointURL = URL(string: "https://miniflux.test")
+
+		try await account.refreshAll()
+
+		#expect(TestingURLProtocol.requestCount(forURLContaining: "/v1/entries/9001") > 0)
+		#expect(account.lastRefreshCompletedDate != nil)
+	}
+
+	@Test func initialReconciliationPreservesPendingLocalStatus() async throws {
+		let account = TestAccountManager.shared.createAccount(type: .miniflux)
+		defer {
+			TestAccountManager.shared.deleteAccount(account)
+		}
+		let delegate = try #require(account.delegate as? MinifluxAccountDelegate)
 		var markedOff = Set<String>()
 
 		let changedCount = await delegate.syncArticleState(
@@ -83,7 +121,18 @@ import SyncDatabase
 			}
 		)
 
-		XCTAssertTrue(markedOff.isEmpty)
-		XCTAssertEqual(changedCount, 0)
+		#expect(markedOff.isEmpty)
+		#expect(changedCount == 0)
 	}
+}
+
+// MARK: - Helpers
+
+/// The article fetch succeeds, then `/v1/entries/ids` returns 500.
+private func setFailingReconciliationResponses() {
+	TestingURLProtocol.setResponse("/v1/version", file: "JSON/miniflux_version.json")
+	TestingURLProtocol.setResponse("/v1/categories", file: "JSON/miniflux_categories_initial.json")
+	TestingURLProtocol.setResponse("/v1/feeds", file: "JSON/miniflux_feeds_initial.json")
+	TestingURLProtocol.setResponse("/v1/entries?", file: "JSON/miniflux_entries_page1.json")
+	TestingURLProtocol.setResponse(.init(statusCode: 500), forURLContaining: "/v1/entries/ids")
 }
